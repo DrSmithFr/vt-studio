@@ -123,6 +123,14 @@ export class VrmController {
     }
   }
 
+  // Remet tous les os en pose de repos (T-pose normalisée) et les
+  // expressions à zéro, ex. quand la détection est désactivée.
+  resetPose() {
+    if (!this.vrm) return;
+    this.vrm.humanoid?.resetNormalizedPose();
+    this.vrm.expressionManager?.resetValues();
+  }
+
   update(deltaSeconds) {
     this.vrm?.update(deltaSeconds);
   }

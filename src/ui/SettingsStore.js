@@ -32,10 +32,16 @@ export function createDefaultSettings() {
       // 'seated' : toujours figées ; 'standing' : toujours suivies.
       framing: 'auto',
       mirrorCamera: true,
+      // Avatar en miroir : la main droite levée anime le bras de l'avatar
+      // situé du même côté de l'écran que dans un miroir.
+      mirrorAvatar: true,
     },
 
     // Panneau gauche : détection.
     detection: {
+      // Désactivée au démarrage : aucun worker ni modèle MediaPipe chargé
+      // tant que l'utilisateur ne l'active pas.
+      enabled: false,
       mode: 'composite', // 'holistic' | 'composite'
       holisticBackend: 'worker', // 'worker' | 'remote'
       backends: { pose: 'worker', face: 'worker', hand: 'worker' },

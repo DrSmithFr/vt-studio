@@ -41,6 +41,7 @@ export class LeftPanel {
     // --- Détection.
     const detection = this.panel.section('Détection');
     const d = settings.detection;
+    detection.toggle(d, 'enabled', { label: 'Détection active' }).tooltip('Raccourci : D');
     detection.select(d, 'mode', { Composite: 'composite', Holistic: 'holistic' }, { label: 'Mode' });
     this.holisticControls = [
       detection.select(d, 'holisticBackend', BACKEND_OPTIONS, { label: 'Exécution' }),

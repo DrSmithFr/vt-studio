@@ -1,12 +1,13 @@
-import { directionToEuler, clamp01, distance3D } from '../utils/MathUtils.js';
+import * as THREE from 'three';
+import { clamp01, distance3D, quaternionToEuler, swingRotation } from '../utils/MathUtils.js';
 import { solveTwoBoneIK } from './TwoBoneIK.js';
 import { pushOutOfTorso, DEFAULT_TORSO_RADIUS } from './CollisionAvoidance.js';
 
 // Indices des landmarks de pose utilisés (schéma à 33 points de
-// PoseLandmarker / BlazePose). Voir la documentation MediaPipe Tasks Vision
-// pour le schéma complet.
+// PoseLandmarker / BlazePose). Côtés anatomiques.
 const POSE = {
-  nose: 0,
+  leftEar: 7,
+  rightEar: 8,
   leftShoulder: 11,
   rightShoulder: 12,
   leftElbow: 13,
@@ -26,28 +27,58 @@ const POSE = {
 // Indices des landmarks de main (schéma à 21 points de HandLandmarker).
 const HAND = {
   wrist: 0,
-  indexMcp: 5,
   middleMcp: 9,
 };
 
-// Direction de repos (bras le long du corps, jambes vers le bas) utilisée
-// comme référence pour dériver chaque rotation. Voir MathUtils.directionToEuler.
-const REST_DOWN = { x: 0, y: -1, z: 0 };
-const REST_FORWARD = { x: 0, y: 0, z: -1 };
+// Directions de repos des os normalisés VRM. Le squelette normalisé de
+// three-vrm est en T-pose, avatar tourné vers +Z, axes alignés sur le monde :
+// bras gauche de l'avatar vers +X, bras droit vers -X, colonne et cou vers
+// +Y, jambes vers -Y. Chaque rotation est calculée comme la rotation
+// minimale amenant cette direction sur la direction observée.
+const REST = {
+  up: new THREE.Vector3(0, 1, 0),
+  down: new THREE.Vector3(0, -1, 0),
+  left: new THREE.Vector3(1, 0, 0),
+  right: new THREE.Vector3(-1, 0, 0),
+};
 
-// Construit, à partir des résultats bruts d'un cycle de détection, un objet
-// pose unique { [nomArticulation]: {x,y,z} } ∪ { [canalVisage]: {x} }.
-// C'est cette pose brute qui alimente ensuite le lissage (Smoother) puis le
-// retargeting (RetargetConfig).
+// Sous ce seuil de visibilité (genoux, chevilles), les jambes sont
+// considérées hors champ en cadrage automatique.
+const LEG_VISIBILITY_THRESHOLD = 0.5;
+
+const ZERO = () => ({ x: 0, y: 0, z: 0 });
+
+// Convertit un landmark « world » MediaPipe (m, origine au centre des
+// hanches ; x vers la droite de l'image, y vers le bas, z s'éloignant de la
+// caméra) dans le repère de l'avatar (y vers le haut, avatar tourné vers +Z,
+// c'est-à-dire vers la caméra). Inverser y et z revient à une rotation de
+// 180° autour de X : le repère reste direct. La personne faisant face à la
+// caméra, son côté gauche est à droite de l'image (+x), comme le bras gauche
+// de l'avatar (+X). En miroir, x est inversé (et les côtés échangés par
+// l'appelant).
+function toAvatarSpace(p, mirror) {
+  return { x: mirror ? -p.x : p.x, y: -p.y, z: -p.z, visibility: p.visibility };
+}
+
+function midpoint(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
+}
+
+function direction(from, to) {
+  return { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+}
+
+// Construit, à partir d'une détection (lissée), la pose { [os]: {x,y,z} }
+// (rotations locales Euler XYZ des os normalisés VRM) ∪ { [canalVisage]: {x} }.
 export class GlobalSkeletonBuilder {
   constructor() {
     // Rayon de la capsule du torse (m), réglable dans le panneau droit.
     this.torsoRadius = DEFAULT_TORSO_RADIUS;
 
-    // Longueurs de segment calibrées progressivement (moyenne mobile lente)
-    // à partir des worldLandmarks, en mètres. Servent de longueurs fixes à
-    // l'IK à deux os : ça évite qu'une distance de segment bruitée une
-    // frame donnée ne fausse l'angle de flexion calculé.
+    // Longueurs de segment calibrées progressivement (moyenne mobile lente),
+    // en mètres. Servent de longueurs fixes à l'IK à deux os : ça évite
+    // qu'une distance de segment bruitée une frame donnée ne fausse l'angle
+    // de flexion calculé. Indexées par côté de l'avatar.
     this.boneLengths = {
       leftUpperArm: null,
       leftLowerArm: null,
@@ -68,154 +99,116 @@ export class GlobalSkeletonBuilder {
   }
 
   // `detection` : détection lissée (DetectionSmoother), au format commun
-  // décrit dans tracking/detectors.js :
-  // {
-  //   pose:  { screen, world } | null,
-  //   face:  { screen, blendshapes: { [nom]: score } } | null,
-  //   hands: { left: { screen, world } | null, right: … },   // côtés anatomiques
-  // }
-  build(detection) {
+  // décrit dans tracking/detectors.js (côtés anatomiques).
+  // `options` : { mirror: bool, framing: 'auto' | 'seated' | 'standing' }.
+  build(detection, { mirror = true, framing = 'auto' } = {}) {
     const pose = {};
-
     if (detection.pose) {
-      this.#buildBodyFromPose(detection.pose.world, pose);
+      this.#buildBody(detection.pose.world, detection.hands ?? {}, pose, mirror, framing);
     }
-
-    // Les mains, si détectées, remplacent la rotation de poignet dérivée de
-    // la pose : HandLandmarker est bien plus précis sur cette zone.
-    if (detection.hands?.left) {
-      pose.leftHand = this.#handRotation(detection.hands.left.world);
-    }
-    if (detection.hands?.right) {
-      pose.rightHand = this.#handRotation(detection.hands.right.world);
-    }
-
     if (detection.face?.blendshapes) {
-      this.#buildFaceChannels(detection.face.blendshapes, pose);
+      this.#buildFaceChannels(detection.face.blendshapes, pose, mirror);
     }
-
     return pose;
   }
 
-  #buildBodyFromPose(landmarks, pose) {
-    const p = POSE;
-    const at = (i) => landmarks[i];
+  #buildBody(world, hands, pose, mirror, framing) {
+    // Côté anatomique de la personne qui pilote un côté donné de l'avatar :
+    // en miroir, la main gauche de la personne anime la main droite de
+    // l'avatar (même côté de l'écran que dans un miroir).
+    const source = (avatarSide) => (mirror ? (avatarSide === 'left' ? 'right' : 'left') : avatarSide);
+    const at = (name, avatarSide) => toAvatarSpace(world[POSE[`${source(avatarSide)}${name}`]], mirror);
 
-    // La clavicule (leftShoulder/rightShoulder) n'est pas retargetée par IK :
-    // son amplitude est faible en pratique et la dériver du même landmark de
-    // coude bruité réintroduirait le tremblement que l'IK élimine par
-    // ailleurs. Laissée à zéro pour l'instant - extension possible avec un
-    // signal plus stable (ex. inclinaison de la ligne des épaules).
-    pose.leftShoulder = { x: 0, y: 0, z: 0 };
-    pose.rightShoulder = { x: 0, y: 0, z: 0 };
+    const hipMid = midpoint(at('Hip', 'left'), at('Hip', 'right'));
+    const shoulderMid = midpoint(at('Shoulder', 'left'), at('Shoulder', 'right'));
+    const earMid = midpoint(at('Ear', 'left'), at('Ear', 'right'));
 
-    const hipMid = midpoint(at(p.leftHip), at(p.rightHip));
-    const shoulderMid = midpoint(at(p.leftShoulder), at(p.rightShoulder));
+    // --- Tronc : bassin fixe, colonne vers le milieu des épaules, cou vers
+    // le milieu des oreilles. Poitrine, clavicules et tête en rotation
+    // locale nulle pour l'instant (la tête suivra le visage).
+    const hipsWorld = new THREE.Quaternion();
+    const spine = swingRotation(REST.up, direction(hipMid, shoulderMid), hipsWorld);
+    const neck = swingRotation(REST.up, direction(shoulderMid, earMid), spine.world);
+    pose.hips = ZERO();
+    pose.spine = quaternionToEuler(spine.local);
+    pose.chest = ZERO();
+    pose.neck = quaternionToEuler(neck.local);
+    pose.head = ZERO();
+    pose.leftShoulder = ZERO();
+    pose.rightShoulder = ZERO();
 
-    this.#solveLimb({
-      pose,
-      side: 'left',
-      upperJoint: 'leftUpperArm',
-      lowerJoint: 'leftLowerArm',
-      root: at(p.leftShoulder),
-      hint: at(p.leftElbow),
-      target: at(p.leftWrist),
-      restDirection: REST_DOWN,
-      avoidTorso: { shoulderMid, hipMid },
-    });
-    this.#solveLimb({
-      pose,
-      side: 'right',
-      upperJoint: 'rightUpperArm',
-      lowerJoint: 'rightLowerArm',
-      root: at(p.rightShoulder),
-      hint: at(p.rightElbow),
-      target: at(p.rightWrist),
-      restDirection: REST_DOWN,
-      avoidTorso: { shoulderMid, hipMid },
-    });
+    // --- Bras (parent : colonne, la poitrine et la clavicule étant à zéro).
+    for (const side of ['left', 'right']) {
+      const shoulder = at('Shoulder', side);
+      const elbow = at('Elbow', side);
+      const wrist = at('Wrist', side);
+      const target = pushOutOfTorso(wrist, shoulderMid, hipMid, this.torsoRadius);
+      const arm = this.#solveLimb(`${side}UpperArm`, `${side}LowerArm`, shoulder, elbow, target, REST[side], spine.world);
+      pose[`${side}UpperArm`] = quaternionToEuler(arm.upper.local);
+      pose[`${side}LowerArm`] = quaternionToEuler(arm.lower.local);
 
-    // Rotation de repli pour les mains, utilisée si HandLandmarker n'a rien
-    // détecté cette frame (voir la substitution dans build()).
-    pose.leftHand = directionToEuler(at(p.leftWrist), at(p.leftIndex), REST_DOWN);
-    pose.rightHand = directionToEuler(at(p.rightWrist), at(p.rightIndex), REST_DOWN);
+      // Main : HandLandmarker (poignet → base du majeur) si la main est
+      // détectée, sinon repli sur la pose (poignet → index).
+      const hand = hands[source(side)];
+      const handDirection = hand
+        ? direction(toAvatarSpace(hand.world[HAND.wrist], mirror), toAvatarSpace(hand.world[HAND.middleMcp], mirror))
+        : direction(wrist, at('Index', side));
+      pose[`${side}Hand`] = quaternionToEuler(swingRotation(REST[side], handDirection, arm.lower.world).local);
+    }
 
-    this.#solveLimb({
-      pose,
-      side: 'left',
-      upperJoint: 'leftUpperLeg',
-      lowerJoint: 'leftLowerLeg',
-      root: at(p.leftHip),
-      hint: at(p.leftKnee),
-      target: at(p.leftAnkle),
-      restDirection: REST_DOWN,
-    });
-    this.#solveLimb({
-      pose,
-      side: 'right',
-      upperJoint: 'rightUpperLeg',
-      lowerJoint: 'rightLowerLeg',
-      root: at(p.rightHip),
-      hint: at(p.rightKnee),
-      target: at(p.rightAnkle),
-      restDirection: REST_DOWN,
-    });
-
-    // Pas de landmark de pied fiable dans ce sous-ensemble : le pied suit le
-    // tibia (rotation nulle relative). Extension possible avec les landmarks
-    // 29-32 (talon, orteils).
-    pose.leftFoot = { x: 0, y: 0, z: 0 };
-    pose.rightFoot = { x: 0, y: 0, z: 0 };
-
-    pose.hips = { x: 0, y: 0, z: 0 };
-    pose.spine = directionToEuler(hipMid, shoulderMid, REST_FORWARD);
-    pose.chest = pose.spine;
-    pose.neck = directionToEuler(shoulderMid, at(p.nose), REST_FORWARD);
-    pose.head = pose.neck;
+    // --- Jambes (parent : bassin), figées en pose de repos si hors champ.
+    const legsTracked =
+      framing === 'standing' ||
+      (framing === 'auto' &&
+        ['Knee', 'Ankle'].every((name) =>
+          ['left', 'right'].every((side) => (at(name, side).visibility ?? 1) >= LEG_VISIBILITY_THRESHOLD),
+        ));
+    for (const side of ['left', 'right']) {
+      if (!legsTracked) {
+        pose[`${side}UpperLeg`] = ZERO();
+        pose[`${side}LowerLeg`] = ZERO();
+      } else {
+        const leg = this.#solveLimb(
+          `${side}UpperLeg`,
+          `${side}LowerLeg`,
+          at('Hip', side),
+          at('Knee', side),
+          at('Ankle', side),
+          REST.down,
+          hipsWorld,
+        );
+        pose[`${side}UpperLeg`] = quaternionToEuler(leg.upper.local);
+        pose[`${side}LowerLeg`] = quaternionToEuler(leg.lower.local);
+      }
+      // Pas de landmark de pied exploité : rotation nulle relative au tibia.
+      pose[`${side}Foot`] = ZERO();
+    }
   }
 
-  // Résout un membre à deux os (bras ou jambe) par IK analytique plutôt que
-  // par deux rotations de segment indépendantes : la racine et la cible
-  // (main/pied) pilotent l'angle de flexion, le landmark intermédiaire
-  // (coude/genou) ne sert qu'à choisir le côté de flexion. `avoidTorso`,
-  // quand fourni, repousse d'abord la cible hors du buste (bras uniquement).
-  #solveLimb({ pose, upperJoint, lowerJoint, root, hint, target, restDirection, avoidTorso }) {
-    const resolvedTarget = avoidTorso
-      ? pushOutOfTorso(target, avoidTorso.shoulderMid, avoidTorso.hipMid, this.torsoRadius)
-      : target;
-
-    const upperLength = this.#calibrateLength(upperJoint, distance3D(root, hint));
-    const lowerLength = this.#calibrateLength(lowerJoint, distance3D(hint, resolvedTarget));
-
-    const { upperDirection, lowerDirection } = solveTwoBoneIK({
-      root,
-      hint,
-      target: resolvedTarget,
-      upperLength,
-      lowerLength,
-    });
-
-    pose[upperJoint] = directionToEuler({ x: 0, y: 0, z: 0 }, upperDirection, restDirection);
-    pose[lowerJoint] = directionToEuler({ x: 0, y: 0, z: 0 }, lowerDirection, restDirection);
+  // Membre à deux os (bras ou jambe) par IK analytique : la racine et la
+  // cible pilotent l'angle de flexion, le landmark intermédiaire ne sert
+  // qu'à choisir le plan de flexion. Chaque segment est ensuite converti en
+  // rotation locale dans le repère de son parent.
+  #solveLimb(upperKey, lowerKey, root, hint, target, restDirection, parentWorld) {
+    const upperLength = this.#calibrateLength(upperKey, distance3D(root, hint));
+    const lowerLength = this.#calibrateLength(lowerKey, distance3D(hint, target));
+    const { upperDirection, lowerDirection } = solveTwoBoneIK({ root, hint, target, upperLength, lowerLength });
+    const upper = swingRotation(restDirection, upperDirection, parentWorld);
+    const lower = swingRotation(restDirection, lowerDirection, upper.world);
+    return { upper, lower };
   }
 
-  #handRotation(handLandmarks) {
-    const h = HAND;
-    return directionToEuler(handLandmarks[h.wrist], handLandmarks[h.middleMcp], REST_DOWN);
-  }
-
-  #buildFaceChannels(blendshapes, pose) {
+  #buildFaceChannels(blendshapes, pose, mirror) {
     const score = (name) => blendshapes[name] ?? 0;
+    // Les blendshapes sont anatomiques ; en miroir, l'œil gauche de la
+    // personne anime l'œil droit de l'avatar, comme pour les membres.
+    const [eyeA, eyeB] = mirror ? ['Right', 'Left'] : ['Left', 'Right'];
 
-    pose.leftEyeBlink = { x: clamp01(score('eyeBlinkLeft')) };
-    pose.rightEyeBlink = { x: clamp01(score('eyeBlinkRight')) };
-    pose.leftEyebrowRaise = { x: clamp01((score('browOuterUpLeft') + score('browInnerUp')) / 2) };
-    pose.rightEyebrowRaise = { x: clamp01((score('browOuterUpRight') + score('browInnerUp')) / 2) };
+    pose.leftEyeBlink = { x: clamp01(score(`eyeBlink${eyeA}`)) };
+    pose.rightEyeBlink = { x: clamp01(score(`eyeBlink${eyeB}`)) };
+    pose.leftEyebrowRaise = { x: clamp01((score(`browOuterUp${eyeA}`) + score('browInnerUp')) / 2) };
+    pose.rightEyebrowRaise = { x: clamp01((score(`browOuterUp${eyeB}`) + score('browInnerUp')) / 2) };
     pose.mouthOpen = { x: clamp01(score('jawOpen')) };
     pose.mouthWide = { x: clamp01((score('mouthStretchLeft') + score('mouthStretchRight')) / 2) };
   }
-}
-
-function midpoint(a, b) {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
 }

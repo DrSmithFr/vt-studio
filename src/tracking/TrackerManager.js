@@ -45,6 +45,10 @@ export class TrackerManager {
     await this.video.play();
   }
 
+  get active() {
+    return this.detectors.length > 0;
+  }
+
   get videoSize() {
     return { width: this.video.videoWidth, height: this.video.videoHeight };
   }
@@ -53,8 +57,9 @@ export class TrackerManager {
   // si le mode, un backend ou le modèle de pose change ; un changement de
   // FPS s'applique immédiatement.
   configure(detection) {
-    const specs =
-      detection.mode === 'holistic'
+    const specs = !detection.enabled
+      ? []
+      : detection.mode === 'holistic'
         ? [{ id: 'holistic', kind: 'holistic', backend: detection.holisticBackend, fps: detection.fps.holistic }]
         : ['pose', 'face', 'hand'].map((kind) => ({
             id: kind,

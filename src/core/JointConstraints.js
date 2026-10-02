@@ -4,11 +4,12 @@
 // une biomécanique exacte - les plages sont volontairement généreuses.
 //
 // Absent d'une entrée pour un canal : aucune limite n'est appliquée.
+//
+// Rotations locales des os normalisés VRM (T-pose). Pas de limites par défaut
+// pour les coudes et genoux : la rotation de swing calculée peut porter la
+// flexion sur Y ou Z selon l'orientation du segment parent, une butée par
+// axe y bloquerait des flexions légitimes. À affiner avec la KeyPose.
 const DEFAULT_LIMITS = {
-  leftLowerArm: { x: [0, 2.6], y: [-0.3, 0.3], z: [-0.3, 0.3] },
-  rightLowerArm: { x: [0, 2.6], y: [-0.3, 0.3], z: [-0.3, 0.3] },
-  leftLowerLeg: { x: [-2.6, 0], y: [-0.2, 0.2], z: [-0.2, 0.2] },
-  rightLowerLeg: { x: [-2.6, 0], y: [-0.2, 0.2], z: [-0.2, 0.2] },
   neck: { x: [-0.6, 0.6], y: [-0.9, 0.9], z: [-0.5, 0.5] },
   head: { x: [-0.6, 0.6], y: [-0.9, 0.9], z: [-0.5, 0.5] },
 };

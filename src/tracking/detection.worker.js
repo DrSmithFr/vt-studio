@@ -31,6 +31,18 @@ let delegate = null;
 // la création de la tâche.
 let gpuUnproven = false;
 
+// MediaPipe ne lève pas d'exception quand son graphe échoue pendant une
+// inférence : il journalise l'erreur (console.error, via emscripten) et
+// renvoie un résultat vide. On repère donc ces messages pour savoir si la
+// dernière inférence a réellement abouti.
+let graphError = null;
+const consoleError = console.error.bind(console);
+console.error = (...args) => {
+  const text = args.map(String).join(' ');
+  if (/was not ok|Graph has errors|before StartRun/.test(text)) graphError ??= text;
+  consoleError(...args);
+};
+
 // GPU d'abord (WebGL2 via OffscreenCanvas), CPU si indisponible.
 async function createTask(detectorKind, options) {
   try {
@@ -60,9 +72,11 @@ self.onmessage = async ({ data }) => {
   if (data.type === 'frame') {
     const { frame, timestamp } = data;
     try {
+      graphError = null;
       const start = performance.now();
       const result = task.detectForVideo(frame, timestamp);
       const inferenceMs = performance.now() - start;
+      if (graphError) throw new Error(graphError.split('\n')[0]);
       gpuUnproven = false;
       self.postMessage({ type: 'result', timestamp, parts: normalizeResult(kind, result), inferenceMs });
     } catch (error) {
@@ -83,7 +97,10 @@ async function fallBackToCpu(error) {
   console.warn(`[${kind}] échec de l'inférence GPU, repli CPU.`, error);
   gpuUnproven = false;
   try {
-    task.close();
+    // Le graphe GPU est dans un état incohérent : sa fermeture peut échouer.
+    try {
+      task.close();
+    } catch {}
     task = await createDetectorTask(kind, fileset, 'CPU', options);
     delegate = 'CPU';
     self.postMessage({ type: 'delegate', delegate });

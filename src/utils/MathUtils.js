@@ -34,3 +34,29 @@ export function clamp01(value) {
 export function distance3D(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
+
+// Rotation minimale (« swing », sans twist) amenant la direction de repos
+// `restDirection` sur `direction`, exprimée dans le repère du parent dont la
+// rotation monde est `parentWorld` (THREE.Quaternion, identité par défaut).
+// Renvoie { local, world } : `local` est la rotation à appliquer à l'os
+// normalisé VRM, `world` sert de parent aux os suivants de la chaîne.
+const _localDirection = new THREE.Vector3();
+const _parentInverse = new THREE.Quaternion();
+
+export function swingRotation(restDirection, direction, parentWorld = null) {
+  _localDirection.set(direction.x, direction.y, direction.z);
+  if (_localDirection.lengthSq() === 0) {
+    const identity = new THREE.Quaternion();
+    return { local: identity, world: parentWorld ? parentWorld.clone() : identity.clone() };
+  }
+  _localDirection.normalize();
+  if (parentWorld) _localDirection.applyQuaternion(_parentInverse.copy(parentWorld).invert());
+  const local = new THREE.Quaternion().setFromUnitVectors(restDirection, _localDirection);
+  const world = parentWorld ? parentWorld.clone().multiply(local) : local.clone();
+  return { local, world };
+}
+
+export function quaternionToEuler(quaternion) {
+  _euler.setFromQuaternion(quaternion, 'XYZ');
+  return { x: _euler.x, y: _euler.y, z: _euler.z };
+}

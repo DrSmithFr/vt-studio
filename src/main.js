@@ -1,5 +1,5 @@
 import './style.css';
-import { ALL_CHANNELS, AXES } from './core/JointSchema.js';
+import { ALL_CHANNELS, AXES, BODY_JOINTS } from './core/JointSchema.js';
 import { GlobalSkeletonBuilder } from './core/GlobalSkeleton.js';
 import { SkeletonSmoother } from './core/Smoother.js';
 import { DetectionSmoother } from './core/DetectionSmoother.js';
@@ -40,7 +40,7 @@ const overlayRenderer = new OverlayRenderer(overlayCanvas);
 const trackerManager = new TrackerManager(video);
 const detectionSmoother = new DetectionSmoother();
 const globalSkeletonBuilder = new GlobalSkeletonBuilder();
-const skeletonSmoother = new SkeletonSmoother(ALL_CHANNELS);
+const skeletonSmoother = new SkeletonSmoother(ALL_CHANNELS, 80, BODY_JOINTS);
 const retargetConfig = new RetargetConfig();
 const jointConstraints = new JointConstraints();
 
@@ -78,7 +78,17 @@ function applySettings() {
   vrmController.setTransform(settings.model);
   globalSkeletonBuilder.torsoRadius = settings.collision.torsoRadius;
   // Ne recrée les détecteurs que si le mode, un backend ou le modèle change.
+  const wasActive = trackerManager.active;
   trackerManager.configure(settings.detection);
+  // Détection coupée : le modèle revient en pose de repos et les lisseurs
+  // repartent de zéro à la prochaine activation.
+  if (wasActive && !trackerManager.active) {
+    vrmController.resetPose();
+    skeletonSmoother.reset();
+    detectionSmoother.reset();
+    overlayRenderer.clear();
+  }
+  renderStatus();
 }
 
 store.subscribe(applySettings);
@@ -155,7 +165,9 @@ new MenuBar(document.getElementById('menubar'), [
           choiceEntry('Debout (corps entier)', settings.general, 'framing', 'standing'),
         ],
       },
+      toggleEntry('Détection active', settings.detection, 'enabled'),
       toggleEntry('Caméra en miroir', settings.general, 'mirrorCamera'),
+      toggleEntry('Avatar en miroir', settings.general, 'mirrorAvatar'),
       { separator: true },
       {
         label: 'Réinitialiser tous les réglages',
@@ -195,6 +207,12 @@ window.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     modelFileInput.click();
+    return;
+  }
+  // D : active / désactive la détection (hors saisie dans un champ).
+  const typing = event.target.closest?.('input, select, textarea');
+  if (!typing && !event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'd') {
+    toggle(settings.detection, 'enabled');
   }
 });
 
@@ -203,7 +221,12 @@ window.addEventListener('keydown', (event) => {
 const status = { model: 'aucun modèle', tracking: 'suivi : initialisation…', fps: 0 };
 
 function renderStatus() {
-  statusBar.textContent = `${status.model}  ·  ${status.tracking}  ·  ${status.fps.toFixed(0)} fps`;
+  const tracking = !trackingReady
+    ? status.tracking
+    : trackerManager.active
+      ? 'détection active'
+      : 'détection désactivée (D pour activer)';
+  statusBar.textContent = `${status.model}  ·  ${tracking}  ·  ${status.fps.toFixed(0)} fps`;
 }
 
 // --- Chargement du modèle ---------------------------------------------------------
@@ -297,12 +320,15 @@ function frame() {
   const dtMs = timestampMs - lastTimestampMs;
   lastTimestampMs = timestampMs;
 
-  if (trackingReady) {
+  if (trackingReady && trackerManager.active) {
     trackerManager.tick(timestampMs);
     const rawDetection = trackerManager.getLatest(timestampMs);
     const detection = detectionSmoother.update(rawDetection, settings.smoothing);
 
-    const rawPose = globalSkeletonBuilder.build(detection);
+    const rawPose = globalSkeletonBuilder.build(detection, {
+      mirror: settings.general.mirrorAvatar,
+      framing: settings.general.framing,
+    });
     const smoothedPose = skeletonSmoother.update(rawPose, dtMs);
     const retargeted = applyRetargeting(smoothedPose, retargetConfig);
     const outputPose = applyJointOffsets(jointConstraints.apply(retargeted));

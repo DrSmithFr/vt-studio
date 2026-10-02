@@ -65,6 +65,7 @@ index.html
 
 Convertit les landmarks bruts de chaque détecteur en un objet `{ [nom]: {x,y,z} }` :
 
+- Chaque rotation est **locale** (repère de l'os parent, T-pose VRM normalisée), calculée comme le swing minimal amenant la direction de repos sur la direction observée.
 - Les bras et les jambes sont résolus par **IK à deux os** (`core/TwoBoneIK.js`, voir section dédiée ci-dessous), pas par deux rotations de segment indépendantes.
 - La clavicule (`leftShoulder`/`rightShoulder`) est laissée à zéro pour l'instant (voir "Reste à faire").
 - Les mains utilisent d'abord une rotation de repli dérivée de la pose (poignet→index), puis sont **remplacées** par la rotation dérivée de `HandLandmarker` (poignet→base du majeur) si une main est détectée cette frame-là - c'est l'exigence de priorité aux mains.
@@ -155,7 +156,8 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`pendingBadge`).
 3. ✅ Détection : un Web Worker par détecteur (Holistic ou Composite), ordonnanceur FPS par détecteur, modèle de pose lite/full/heavy, statistiques (FPS effectif, inférence, GPU/CPU), lissage des landmarks (`DetectionSmoother`), surimpression brute / lissée. Points d'attention : les workers sont des modules ES (`worker.format: 'es'` dans `vite.config.js`) et utilisent la variante « module » du WASM MediaPipe ; HandLandmarker étiquette la latéralité en supposant une image miroir, d'où l'inversion Left→droite dans `detectors.js` (à confirmer visuellement grâce aux étiquettes G/D).
 4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
-5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug. Corrige au passage les défauts du noyau récupéré : repère MediaPipe (Y vers le bas) vs three.js, rotations globales vs locales, NaN du lisseur sur les canaux de visage.
+5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug.
+   Déjà corrigé en avance (défauts du noyau récupéré) : conversion du repère MediaPipe (y bas, z s'éloignant) vers celui de l'avatar (`toAvatarSpace` : (x, -y, -z), x inversé en miroir) ; directions de repos de la T-pose VRM normalisée (bras ±X, colonne +Y, jambes -Y) ; rotations **locales** calculées os par os dans le repère du parent (`swingRotation` dans `utils/MathUtils.js`) ; miroir de l'avatar au niveau des landmarks (côtés échangés + x inversé, réglage `general.mirrorAvatar`) ; jambes figées selon le cadrage ; angles déroulés dans `Smoother` (plus de saut à ±π) ; NaN des canaux de visage. Vérifié numériquement (T-pose, bras le long du corps, bras vers la caméra, coude plié, direct et miroir).
 6. Suivi par ressort amorti + menu du bas (offsets, raideur/amortissement) + retargeting et butées dans le panneau droit.
 7. Backend remote : serveur Python (MediaPipe + WebRTC/aiortc), DataChannel, mode Composite mixte.
 8. Validation en conditions réelles, valeurs par défaut, documentation.

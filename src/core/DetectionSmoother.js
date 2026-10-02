@@ -74,6 +74,10 @@ class ScoreStream {
 
 export class DetectionSmoother {
   constructor() {
+    this.reset();
+  }
+
+  reset() {
     this.streams = {
       poseScreen: new LandmarkStream(),
       poseWorld: new LandmarkStream(),
