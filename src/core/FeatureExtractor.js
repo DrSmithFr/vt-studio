@@ -92,15 +92,19 @@ export function torsoQuaternions(values) {
   return { hips, spine, chest, chestWorld: hips.clone().multiply(spine).multiply(chest) };
 }
 
-// Repère de la paume dans l'espace où sont exprimés les points (MediaPipe) :
-// f = vers les doigts, s = vers le pouce, n = côté paume. Le produit
-// vectoriel f × s pointe côté paume pour une main droite anatomique et côté
-// dos pour une main gauche (vérifié paume face caméra, doigts vers le haut).
+// Repère de la paume dans l'espace où sont exprimés les points (MediaPipe :
+// x droite de l'image, y bas, z s'éloignant) : f = vers les doigts, s = vers
+// le pouce, n = côté paume. Le produit vectoriel f × s pointe côté paume
+// pour une main gauche anatomique et côté dos pour une main droite.
+// Vérification : main droite levée, paume face caméra, doigts vers le haut
+// → f = (0,-1,0) ; le pouce est côté médial, vers la gauche de la personne,
+// donc à droite de l'image : s = (1,0,0) ; f × s = (0,0,1) s'éloigne de la
+// caméra, c'est le dos de la main.
 function palmFrame(wrist, indexBase, littleBase, anatomicalSide) {
   const f = vec(sub(mid(indexBase, littleBase), wrist)).normalize();
   const s = vec(sub(indexBase, littleBase));
   s.addScaledVector(f, -s.dot(f)).normalize();
-  const n = new THREE.Vector3().crossVectors(f, s).multiplyScalar(anatomicalSide === 'right' ? 1 : -1);
+  const n = new THREE.Vector3().crossVectors(f, s).multiplyScalar(anatomicalSide === 'left' ? 1 : -1);
   return { f, s, n };
 }
 
