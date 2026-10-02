@@ -5,6 +5,41 @@ import { RemoteBackend, WorkerBackend } from './backends.js';
 // est considérée comme perdue.
 const STALE_AFTER_MS = 500;
 
+// Indices des poignets dans le schéma de pose (côtés anatomiques).
+const POSE_WRIST = { left: 15, right: 16 };
+
+// Au-delà de cette distance à l'écran (fraction de la largeur), une main
+// seule n'est pas rattachée à un poignet du squelette : on garde son
+// étiquette.
+const MAX_WRIST_DISTANCE = 0.2;
+
+const screenDistance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// Attribue chaque main détectée au poignet du squelette de pose le plus
+// proche, plutôt que de se fier à l'étiquette de latéralité du détecteur de
+// mains (HandLandmarker la donne en supposant une image miroir, Holistic
+// selon sa propre convention : les deux se sont révélées peu fiables, alors
+// que les côtés du squelette de pose sont corrects). Sans squelette, les
+// étiquettes sont conservées.
+function assignHandsToWrists(hands, pose) {
+  const detected = [hands.left, hands.right].filter(Boolean);
+  if (!pose?.screen || detected.length === 0) return hands;
+  const wrists = { left: pose.screen[POSE_WRIST.left], right: pose.screen[POSE_WRIST.right] };
+  const cost = (hand, side) => screenDistance(hand.screen[0], wrists[side]);
+
+  if (detected.length === 2) {
+    const [a, b] = detected;
+    const keep = cost(a, 'left') + cost(b, 'right');
+    const swap = cost(a, 'right') + cost(b, 'left');
+    return keep <= swap ? { left: a, right: b } : { left: b, right: a };
+  }
+
+  const [hand] = detected;
+  const nearest = cost(hand, 'left') <= cost(hand, 'right') ? 'left' : 'right';
+  if (cost(hand, nearest) > MAX_WRIST_DISTANCE) return hands;
+  return nearest === 'left' ? { left: hand, right: null } : { left: null, right: hand };
+}
+
 // Fenêtre de calcul des statistiques (FPS effectif, temps d'inférence).
 const STATS_WINDOW_MS = 1000;
 
@@ -145,7 +180,7 @@ export class TrackerManager {
     return {
       pose: pose?.data ?? null,
       face: face?.data ?? null,
-      hands: hands?.data ?? { left: null, right: null },
+      hands: assignHandsToWrists(hands?.data ?? { left: null, right: null }, pose?.data ?? null),
       timestamps: { pose: pose?.timestamp ?? null, face: face?.timestamp ?? null, hands: hands?.timestamp ?? null },
     };
   }
