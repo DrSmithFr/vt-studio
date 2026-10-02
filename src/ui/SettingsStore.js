@@ -12,7 +12,18 @@ function defaultCalibration() {
     hands[fingerFeatureKey(side, 'thumb', 'baseSpread')] = 0.6;
     hands[fingerFeatureKey(side, 'thumb', 'baseFlex')] = 0.3;
   }
-  return { body, hands, bodyCalibrated: false, handsCalibrated: false };
+  return {
+    body,
+    hands,
+    bodyCalibrated: false,
+    handsCalibrated: false,
+    // Repos des mains : 'auto' = repos naturel appris en continu
+    // (HandRestTracker), 'manual' = capture main ouverte (bouton).
+    handsMode: 'auto',
+    // Apprentissage du mode auto, sauvegardé pour reprendre au rechargement.
+    handsAuto: { ...hands },
+    handsAutoSeconds: { left: 0, right: 0 },
+  };
 }
 
 const STORAGE_KEY = 'vt-studio.settings';
@@ -168,6 +179,14 @@ export class SettingsStore {
   // planifie la sauvegarde locale.
   commit() {
     for (const listener of this.listeners) listener(this.data);
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.#save(), SAVE_DEBOUNCE_MS);
+  }
+
+  // Sauvegarde différée sans notifier les abonnés : pour des données mises à
+  // jour en continu (ex. repos des mains appris), qui n'ont pas à
+  // resynchroniser l'interface.
+  saveSoon() {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.#save(), SAVE_DEBOUNCE_MS);
   }

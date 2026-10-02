@@ -82,9 +82,13 @@ export class KeyPoseBuilder {
   }
 
   // `extraction` : sortie de FeatureExtractor.extract() ({ values, has,
-  // expressions }). `settings` : { restPose, motion, bodyCalibrated }.
+  // expressions }). `settings` : { restPose, motion, bodyCalibrated,
+  // handsRelativeToRest }. Avec `handsRelativeToRest`, les valeurs des doigts
+  // sont des écarts au repos naturel de la personne (mode auto) : elles
+  // s'ajoutent à la pose de repos des mains au lieu de partir d'une main
+  // tendue.
   // Renvoie { pose: { [os ou canal]: {x,y,z} }, hipsOffset: {x,y,z} }.
-  build({ values, has, expressions }, { restPose, motion, bodyCalibrated }) {
+  build({ values, has, expressions }, { restPose, motion, bodyCalibrated, handsRelativeToRest = false }) {
     const pose = {};
     const v = has.body ? values : {};
 
@@ -168,11 +172,12 @@ export class KeyPoseBuilder {
     const handRest = HAND_REST_POSES[restPose.hands] ?? HAND_REST_POSES.relaxed;
     for (const side of SIDES) {
       for (const key of FINGER_KEYS) {
+        const base = handsRelativeToRest ? handRest[key] : { baseFlex: 0, baseSpread: 0, tipFlex: 0 };
         const angles = has[side]
           ? {
-              baseFlex: values[fingerFeatureKey(side, key, 'baseFlex')],
-              baseSpread: values[fingerFeatureKey(side, key, 'baseSpread')],
-              tipFlex: values[fingerFeatureKey(side, key, 'tipFlex')],
+              baseFlex: base.baseFlex + values[fingerFeatureKey(side, key, 'baseFlex')],
+              baseSpread: base.baseSpread + values[fingerFeatureKey(side, key, 'baseSpread')],
+              tipFlex: base.tipFlex + values[fingerFeatureKey(side, key, 'tipFlex')],
             }
           : handRest[key];
         this.#applyFinger(pose, side, FINGER_NAMES[key], angles);

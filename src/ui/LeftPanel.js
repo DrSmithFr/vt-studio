@@ -39,6 +39,12 @@ export class LeftPanel {
     // Calibration : la posture tenue pendant la capture devient le zéro des
     // valeurs relatives (corps : droit, face caméra ; mains : ouvertes,
     // doigts tendus et serrés).
+    rest
+      .select(settings.calibration, 'handsMode', { 'Auto (60 s)': 'auto', Manuel: 'manual' }, { label: 'Zéro des doigts' })
+      .tooltip(
+        'Auto : repos naturel des doigts appris en continu (moyenne sur 60 s, mains au repos), ' +
+          'qui donne la pose « Repos des mains ». Manuel : main ouverte capturée par le bouton.',
+      );
     this.calibrationButtons = {
       body: rest.button('Calibrer le corps', () => actions.calibrateBody?.()),
       hands: rest.button('Calibrer les mains', () => actions.calibrateHands?.()),
@@ -100,11 +106,16 @@ export class LeftPanel {
 
   // `labels` : { body, hands } — texte des boutons (compte à rebours) ;
   // `calibration` : réglages de calibration (état affiché).
-  setCalibrationState(labels, calibration) {
+  // `learned` : secondes de repos des mains apprises par côté (mode auto).
+  setCalibrationState(labels, calibration, learned = null) {
     this.calibrationButtons.body.setLabel(labels.body ?? 'Calibrer le corps');
-    this.calibrationButtons.hands.setLabel(labels.hands ?? 'Calibrer les mains');
+    this.calibrationButtons.hands.setLabel(labels.hands ?? 'Calibrer les mains (ouvertes)');
     const state = (done) => (done ? 'fait' : 'par défaut');
-    this.calibrationStatus.set(`corps ${state(calibration.bodyCalibrated)} · mains ${state(calibration.handsCalibrated)}`);
+    const hands =
+      calibration.handsMode === 'auto' && learned
+        ? `mains auto G ${learned.left.toFixed(0)} s · D ${learned.right.toFixed(0)} s`
+        : `mains ${state(calibration.handsCalibrated)}`;
+    this.calibrationStatus.set(`corps ${state(calibration.bodyCalibrated)} · ${hands}`);
   }
 
   // `stats` : TrackerManager.getStats().

@@ -3,6 +3,7 @@ import { ALL_CHANNELS, AXES, ROTATION_JOINTS } from './core/JointSchema.js';
 import { CALIBRATED_KEYS } from './core/FeatureSchema.js';
 import { FeatureExtractor } from './core/FeatureExtractor.js';
 import { KeyPoseBuilder } from './core/KeyPoseBuilder.js';
+import { HandRestTracker } from './core/HandRestTracker.js';
 import { SkeletonSmoother } from './core/Smoother.js';
 import { DetectionSmoother } from './core/DetectionSmoother.js';
 import { RetargetConfig, applyRetargeting } from './core/RetargetConfig.js';
@@ -67,6 +68,12 @@ const store = new SettingsStore(defaults);
 store.load();
 const settings = store.data;
 
+// Repos naturel des doigts (mode auto), repris là où il en était.
+const handRestTracker = new HandRestTracker(store.defaults.calibration.hands);
+handRestTracker.seed(settings.calibration.handsAuto, settings.calibration.handsAutoSeconds);
+const HAND_REST_SAVE_INTERVAL_MS = 10000;
+let lastHandRestSaveMs = performance.now();
+
 retargetConfig.sideInversion = settings.retarget.sideInversion;
 retargetConfig.axisInvert = settings.retarget.axisInvert;
 retargetConfig.amplification = settings.retarget.amplification;
@@ -115,6 +122,9 @@ const jointDock = new JointDock(document.getElementById('joint-dock'), store);
 // Resynchronise les contrôles après un changement venu d'ailleurs (menu,
 // import, réinitialisation).
 function refreshUi() {
+  // Après un import ou une réinitialisation, le repos appris des mains
+  // repart des valeurs des réglages.
+  handRestTracker.seed(settings.calibration.handsAuto, settings.calibration.handsAutoSeconds);
   leftPanel.refresh(settings);
   rightPanel.refresh();
   jointDock.refresh();
@@ -329,7 +339,21 @@ let calibrationCapture = null;
 const calibrationLabels = {};
 
 function refreshCalibrationUi() {
-  leftPanel.setCalibrationState(calibrationLabels, settings.calibration);
+  leftPanel.setCalibrationState(calibrationLabels, settings.calibration, handRestTracker.learnedSeconds);
+}
+
+function handsAuto() {
+  return settings.calibration.handsMode === 'auto';
+}
+
+// Le repos appris évolue en continu : sauvegarde périodique, silencieuse.
+function saveHandRestPeriodically(nowMs) {
+  if (nowMs - lastHandRestSaveMs < HAND_REST_SAVE_INTERVAL_MS) return;
+  lastHandRestSaveMs = nowMs;
+  Object.assign(settings.calibration.handsAuto, handRestTracker.reference);
+  Object.assign(settings.calibration.handsAutoSeconds, handRestTracker.learnedSeconds);
+  store.saveSoon();
+  refreshCalibrationUi();
 }
 
 function startCalibration(group) {
@@ -360,7 +384,11 @@ function startCalibration(group) {
       } else {
         Object.assign(settings.calibration[group], reference);
         settings.calibration[group === 'body' ? 'bodyCalibrated' : 'handsCalibrated'] = true;
+        // Capture main ouverte : passe en mode manuel (sinon elle serait
+        // ignorée au profit du repos appris).
+        if (group === 'hands') settings.calibration.handsMode = 'manual';
         store.commit();
+        refreshUi();
       }
       refreshCalibrationUi();
     });
@@ -405,7 +433,12 @@ function resetCalibration() {
   Object.assign(settings.calibration.hands, store.defaults.calibration.hands);
   settings.calibration.bodyCalibrated = false;
   settings.calibration.handsCalibrated = false;
+  settings.calibration.handsMode = 'auto';
+  handRestTracker.reset();
+  Object.assign(settings.calibration.handsAuto, handRestTracker.reference);
+  Object.assign(settings.calibration.handsAutoSeconds, handRestTracker.learnedSeconds);
   store.commit();
+  refreshUi();
   refreshCalibrationUi();
 }
 
@@ -442,15 +475,21 @@ function frame() {
       mirror: settings.general.mirrorAvatar,
       aspect: videoAspect(),
       framing: settings.general.framing,
-      calibration: settings.calibration,
+      calibration: {
+        body: settings.calibration.body,
+        hands: handsAuto() ? handRestTracker.reference : settings.calibration.hands,
+      },
     });
     calibrationCapture?.collect(extraction);
+    handRestTracker.update(extraction.raw, extraction.has, dtMs);
+    saveHandRestPeriodically(timestampMs);
     rightPanel.setFeatures(extraction.values);
 
     const keyPose = keyPoseBuilder.build(extraction, {
       restPose: settings.restPose,
       motion: settings.motion,
       bodyCalibrated: settings.calibration.bodyCalibrated,
+      handsRelativeToRest: handsAuto(),
     });
     const target = applyJointOffsets(jointConstraints.apply(applyRetargeting(keyPose.pose, retargetConfig)));
     target.hipsOffset = keyPose.hipsOffset;
