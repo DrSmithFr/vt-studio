@@ -41,6 +41,7 @@ export function createDefaultSettings() {
       backends: { pose: 'worker', face: 'worker', hand: 'worker' },
       // Corps plus espacé, visage normal, mains plus fréquentes.
       fps: { holistic: 30, pose: 15, face: 30, hand: 45 },
+      poseModel: 'full', // 'lite' | 'full' | 'heavy' (mode Composite)
       remoteUrl: '',
     },
 

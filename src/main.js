@@ -2,11 +2,13 @@ import './style.css';
 import { ALL_CHANNELS, AXES } from './core/JointSchema.js';
 import { GlobalSkeletonBuilder } from './core/GlobalSkeleton.js';
 import { SkeletonSmoother } from './core/Smoother.js';
+import { DetectionSmoother } from './core/DetectionSmoother.js';
 import { RetargetConfig, applyRetargeting } from './core/RetargetConfig.js';
 import { JointConstraints } from './core/JointConstraints.js';
 import { TrackerManager } from './tracking/TrackerManager.js';
 import { VrmController } from './vrm/VrmController.js';
 import { SceneManager } from './render/SceneManager.js';
+import { OverlayRenderer } from './render/OverlayRenderer.js';
 import { SettingsStore, createDefaultSettings } from './ui/SettingsStore.js';
 import { MenuBar } from './ui/MenuBar.js';
 import { LeftPanel } from './ui/LeftPanel.js';
@@ -27,13 +29,16 @@ const MAX_DT_SECONDS = 0.1;
 const app = document.getElementById('app');
 const video = document.getElementById('webcam-source');
 const sceneCanvas = document.getElementById('scene-canvas');
+const overlayCanvas = document.getElementById('overlay-canvas');
 const statusBar = document.getElementById('status-bar');
 const modelFileInput = document.getElementById('model-file');
 const settingsFileInput = document.getElementById('settings-file');
 
 const sceneManager = new SceneManager(sceneCanvas);
 const vrmController = new VrmController(sceneManager.scene);
+const overlayRenderer = new OverlayRenderer(overlayCanvas);
 const trackerManager = new TrackerManager(video);
+const detectionSmoother = new DetectionSmoother();
 const globalSkeletonBuilder = new GlobalSkeletonBuilder();
 const skeletonSmoother = new SkeletonSmoother(ALL_CHANNELS);
 const retargetConfig = new RetargetConfig();
@@ -72,6 +77,8 @@ function applySettings() {
   vrmController.setVisible(settings.layers.model);
   vrmController.setTransform(settings.model);
   globalSkeletonBuilder.torsoRadius = settings.collision.torsoRadius;
+  // Ne recrée les détecteurs que si le mode, un backend ou le modèle change.
+  trackerManager.configure(settings.detection);
 }
 
 store.subscribe(applySettings);
@@ -251,11 +258,10 @@ window.addEventListener('drop', (event) => {
 
 let trackingReady = false;
 
+// Les détecteurs se chargent dans leurs workers dès applySettings() ; ici,
+// seule la webcam est attendue.
 async function startTracking() {
   try {
-    status.tracking = 'suivi : chargement des modèles MediaPipe…';
-    renderStatus();
-    await trackerManager.init();
     status.tracking = 'suivi : en attente de la webcam…';
     renderStatus();
     await trackerManager.startWebcam();
@@ -292,14 +298,23 @@ function frame() {
   lastTimestampMs = timestampMs;
 
   if (trackingReady) {
-    const detection = trackerManager.detect(timestampMs);
-    // Sans détection cette frame, une pose vide laisse le lisseur conserver
-    // les dernières valeurs lissées.
-    const rawPose = detection ? globalSkeletonBuilder.build(detection) : {};
+    trackerManager.tick(timestampMs);
+    const rawDetection = trackerManager.getLatest(timestampMs);
+    const detection = detectionSmoother.update(rawDetection, settings.smoothing);
+
+    const rawPose = globalSkeletonBuilder.build(detection);
     const smoothedPose = skeletonSmoother.update(rawPose, dtMs);
     const retargeted = applyRetargeting(smoothedPose, retargetConfig);
     const outputPose = applyJointOffsets(jointConstraints.apply(retargeted));
     vrmController.applyPose(outputPose);
+
+    overlayRenderer.draw({
+      raw: rawDetection,
+      smoothed: detection,
+      layers: settings.layers,
+      mirror: settings.general.mirrorCamera,
+      videoSize: trackerManager.videoSize,
+    });
   }
 
   vrmController.update(Math.min(dtMs / 1000, MAX_DT_SECONDS));
@@ -311,6 +326,7 @@ function frame() {
     status.fps = (fpsAccumulator.frames * 1000) / fpsAccumulator.elapsedMs;
     fpsAccumulator = { frames: 0, elapsedMs: 0 };
     renderStatus();
+    leftPanel.setStats(trackerManager.getStats(timestampMs));
   }
 
   requestAnimationFrame(frame);

@@ -13,6 +13,12 @@ const CERT_DIR = new URL('./.cert/', import.meta.url);
 const hasCert = fs.existsSync(new URL('cert.pem', CERT_DIR)) && fs.existsSync(new URL('key.pem', CERT_DIR));
 
 export default defineConfig({
+  // Workers de détection en modules ES : MediaPipe y charge son runtime WASM
+  // par import() dynamique (variante « module »), impossible dans un worker
+  // classique où il tenterait importScripts sur un module ES.
+  worker: {
+    format: 'es',
+  },
   server: {
     host: '0.0.0.0',
     https: hasCert

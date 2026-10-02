@@ -67,17 +67,18 @@ export class GlobalSkeletonBuilder {
     return this.boneLengths[key];
   }
 
-  // `detection` a la forme :
+  // `detection` : détection lissée (DetectionSmoother), au format commun
+  // décrit dans tracking/detectors.js :
   // {
-  //   pose: worldLandmarks[] | null,       // PoseLandmarker
-  //   face: { blendshapes } | null,        // FaceLandmarker
-  //   hands: { left: {world, screen}|null, right: {world, screen}|null }, // HandLandmarker
+  //   pose:  { screen, world } | null,
+  //   face:  { screen, blendshapes: { [nom]: score } } | null,
+  //   hands: { left: { screen, world } | null, right: … },   // côtés anatomiques
   // }
   build(detection) {
     const pose = {};
 
     if (detection.pose) {
-      this.#buildBodyFromPose(detection.pose, pose);
+      this.#buildBodyFromPose(detection.pose.world, pose);
     }
 
     // Les mains, si détectées, remplacent la rotation de poignet dérivée de
@@ -204,7 +205,7 @@ export class GlobalSkeletonBuilder {
   }
 
   #buildFaceChannels(blendshapes, pose) {
-    const score = (name) => blendshapes.find((c) => c.categoryName === name)?.score ?? 0;
+    const score = (name) => blendshapes[name] ?? 0;
 
     pose.leftEyeBlink = { x: clamp01(score('eyeBlinkLeft')) };
     pose.rightEyeBlink = { x: clamp01(score('eyeBlinkRight')) };

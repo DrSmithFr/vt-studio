@@ -214,7 +214,10 @@ export class Section {
     row.field.append(value);
     let text = '—';
     const update = () => {
-      if (value.textContent !== text) value.textContent = text;
+      if (value.textContent !== text) {
+        value.textContent = text;
+        value.title = text;
+      }
     };
     const control = this.#register(row, update, []);
     control.set = (nextText) => {

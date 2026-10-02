@@ -34,11 +34,16 @@ src/
     JointConstraints.js     — butées angulaires par articulation (rigidité), appliquées après le retargeting
     RetargetConfig.js       — inversion de côté, inversion par axe, amplification (état + application)
   tracking/
-    TrackerManager.js    — initialisation webcam + 3 landmarkers MediaPipe, boucle de détection par frame
+    TrackerManager.js    — webcam + ordonnanceur : détecteurs Holistic ou Composite, FPS par détecteur, dernière détection par partie, statistiques
+    detectors.js          — création des tâches MediaPipe et normalisation des résultats au format commun (côtés anatomiques)
+    detection.worker.js   — Web Worker (module ES) exécutant un détecteur, GPU avec repli CPU
+    backends.js           — WorkerBackend ; RemoteBackend (bouchon jusqu'à la phase 7)
+  core/DetectionSmoother.js — lissage exponentiel des landmarks et blendshapes, par détecteur, une fois par nouveau résultat
   vrm/
     VrmController.js     — chargement VRM, transform du modèle, application des rotations d'os et des expressions
   render/
     SceneManager.js       — scène three.js (caméra, lumières, renderer)
+    OverlayRenderer.js    — surimpression 2D des détections brutes / lissées, alignée sur la vidéo affichée, étiquettes G/D
   utils/
     MathUtils.js          — dérivation d'une rotation Euler à partir d'une paire de landmarks 3D
   core/FeatureSchema.js    — liste des valeurs relatives affichées dans le panneau droit
@@ -148,7 +153,7 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 
 1. ✅ Récupération + premier commit ; boucle minimale (`main.js`), chargement VRM 0.x/1.0 (liste, fichier, glisser-déposer), WASM MediaPipe servi localement, serveur de dev HTTPS sur 0.0.0.0 (certificat auto-signé dans `.cert/`, non versionné, voir `vite.config.js`).
 2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`pendingBadge`).
-3. Détection : backend Web Worker (Holistic + Composite), ordonnanceur FPS par détecteur, lissage des landmarks, surimpression (caméra, brut, lissé).
+3. ✅ Détection : un Web Worker par détecteur (Holistic ou Composite), ordonnanceur FPS par détecteur, modèle de pose lite/full/heavy, statistiques (FPS effectif, inférence, GPU/CPU), lissage des landmarks (`DetectionSmoother`), surimpression brute / lissée. Points d'attention : les workers sont des modules ES (`worker.format: 'es'` dans `vite.config.js`) et utilisent la variante « module » du WASM MediaPipe ; HandLandmarker étiquette la latéralité en supposant une image miroir, d'où l'inversion Left→droite dans `detectors.js` (à confirmer visuellement grâce aux étiquettes G/D).
 4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
 5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug. Corrige au passage les défauts du noyau récupéré : repère MediaPipe (Y vers le bas) vs three.js, rotations globales vs locales, NaN du lisseur sur les canaux de visage.
 6. Suivi par ressort amorti + menu du bas (offsets, raideur/amortissement) + retargeting et butées dans le panneau droit.
