@@ -50,3 +50,46 @@ html, body {
   color: #9a9aa5;
   pointer-events: none;
 }
+
+#toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+}
+
+#toolbar select,
+#toolbar .button {
+  padding: 4px 8px;
+  border: 1px solid #33333d;
+  border-radius: 4px;
+  background: #1c1c24;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+#toolbar .button:hover,
+#toolbar select:hover {
+  border-color: #55556a;
+}
+
+#drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #7a7aff;
+  background: rgba(14, 14, 18, 0.7);
+  font-size: 18px;
+  pointer-events: none;
+}
+
+#app.dragging #drop-hint {
+  display: flex;
+}

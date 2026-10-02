@@ -41,6 +41,10 @@ export class VrmController {
   constructor(scene) {
     this.scene = scene;
     this.vrm = null;
+    // Lacet de base imposé par le format : les modèles VRM 0.x regardent
+    // vers -Z et sont retournés de π par VRMUtils.rotateVRM0. La rotation
+    // réglée dans le panneau s'ajoute à cette base au lieu de l'écraser.
+    this.baseYaw = 0;
     this.loader = new GLTFLoader();
     this.loader.register((parser) => new VRMLoaderPlugin(parser));
   }
@@ -52,16 +56,35 @@ export class VrmController {
     const vrm = gltf.userData.vrm;
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.combineSkeletons(gltf.scene);
+    VRMUtils.rotateVRM0(vrm);
 
     this.vrm = vrm;
+    this.baseYaw = vrm.scene.rotation.y;
     this.scene.add(vrm.scene);
     return vrm;
+  }
+
+  // Charge un fichier .vrm choisi par l'utilisateur (<input type="file"> ou
+  // glisser-déposer). L'URL objet n'est utile que le temps du chargement.
+  async loadFromFile(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      return await this.loadFromUrl(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   unload() {
     if (!this.vrm) return;
     this.scene.remove(this.vrm.scene);
+    VRMUtils.deepDispose(this.vrm.scene);
     this.vrm = null;
+  }
+
+  // Version du format du modèle chargé ('0' ou '1'), pour l'affichage.
+  get metaVersion() {
+    return this.vrm?.meta?.metaVersion ?? null;
   }
 
   // Position/rotation/échelle du modèle dans la scène (réglable dans le
@@ -70,7 +93,7 @@ export class VrmController {
     if (!this.vrm) return;
     const root = this.vrm.scene;
     if (position) root.position.set(position.x, position.y, position.z);
-    if (rotationY !== undefined) root.rotation.y = rotationY;
+    if (rotationY !== undefined) root.rotation.y = this.baseYaw + rotationY;
     if (scale !== undefined) root.scale.setScalar(scale);
   }
 

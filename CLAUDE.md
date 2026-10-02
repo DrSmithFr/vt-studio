@@ -98,35 +98,57 @@ Trois couches de réglage, dans cet ordre d'application :
 
 Les noms d'articulation du squelette global sont choisis pour correspondre directement aux noms d'os humanoïdes VRM (`JOINT_TO_VRM_BONE` est donc une table identité). Les canaux de visage sont mappés vers les préréglages d'expression VRM standard quand ils existent (`blinkLeft`, `blinkRight`, `aa`, `ih`) ; `leftEyebrowRaise`/`rightEyebrowRaise` n'ont pas d'équivalent standard VRM 1.0 et ne sont pas encore appliqués au modèle (à connecter à une expression personnalisée si le modèle en définit une).
 
-## Boucle par frame (à assembler dans `main.js`)
+## Architecture cible (reconstruction après perte, 2026-10-02)
+
+Le projet a été perdu (formatage sans backup) et est reconstruit. Les sections ci-dessus décrivent le noyau récupéré ; la version perdue allait plus loin. Cible décrite par l'utilisateur :
+
+### Pipeline
 
 ```
-timestampMs   = performance.now()
-detection     = trackerManager.detect(timestampMs)
-rawPose       = globalSkeletonBuilder.build(detection)     // IK + collision déjà appliqués ici
-smoothedPose  = skeletonSmoother.update(rawPose, dtMs)
-retargeted    = applyRetargeting(smoothedPose, retargetConfig)
-outputPose    = jointConstraints.apply(retargeted)          // rigidité, dernier filtre avant le modèle
-vrmController.applyPose(outputPose)
-vrmController.update(dtSeconds)
-overlayRenderer.draw(detection, layerVisibility)   // couches de débogage
-sceneManager.render()
+Webcam
+ → Backends de détection, au choix :
+     Holistic  : HolisticLandmarker, en Web Worker OU en remote
+     Composite : Pose / Face / Hand séparés, chacun en Web Worker OU en remote (mixte possible)
+   Remote = serveur Python + MediaPipe officiel, vidéo envoyée par WebRTC,
+            landmarks renvoyés par DataChannel (dossier server/)
+ → Ordonnanceur : limite de FPS par détecteur (corps espacé, visage normal, mains fréquentes)
+ → Lissage des landmarks (« détection lissée », affichable en surimpression)
+ → Calibration (zéro de référence, séparée corps / mains)
+ → Extraction de valeurs relatives (panneau droit) :
+     position latérale du bassin (% largeur écran), hauteur des épaules (% hauteur écran),
+     angle + rotation de la colonne, 2 angles épaule-bras, position des mains,
+     doigts : 2 angles pour la 1re phalange + 1 angle pour le bout
+ → Reconstruction de la KeyPose : squelette du modèle dupliqué, piloté par les valeurs
+   relatives (IK à deux os, évitement du torse, interpolation du reste) ;
+   pose de repos (corps / mains séparés) pour les parties non détectées
+ → Retargeting (inversion de côté, inversion / amplification par axe fusionnées) + butées
+ → Offsets par articulation (menu flottant du bas)
+ → Suivi : chaque os du modèle visible suit la KeyPose par ressort amorti,
+   raideur / amortissement réglables par articulation (menu flottant du bas)
+ → Modèle VRM
 ```
 
-## Reste à faire
+### Interface (type logiciel)
 
-- `src/main.js` : à écrire pour assembler la boucle ci-dessus, gérer le chargement du fichier `.vrm` par l'utilisateur (`<input type="file">`), et démarrer `TrackerManager`.
-- `src/render/OverlayRenderer.js` : dessin 2D sur `#overlay-canvas` des landmarks bruts (squelette de pose, maillage du visage, squelette des mains) et, en superposition, du squelette global - chaque couche activable indépendamment.
-- `src/ui/DebugPanel.js` : panneau `lil-gui` exposant :
-  - visibilité de chaque couche (détection pose, détection visage, détection mains, squelette global) ;
-  - les trois interrupteurs d'inversion de côté ;
-  - pour chaque groupe de réglage fusionné (`RetargetConfig.axisInvert`/`amplification`), un contrôle par axe ;
-  - le délai de lissage par articulation (`SkeletonSmoother.setDelay`) ;
-  - les butées par articulation (`JointConstraints.setLimit`) ;
-  - le rayon de la capsule torse (`CollisionAvoidance.pushOutOfTorso`) ;
-  - la position/rotation/échelle du modèle VRM (`VrmController.setTransform`).
-- Chargement du modèle VRM depuis un fichier local (actuellement `VrmController.loadFromUrl` attend une URL - à combiner avec `URL.createObjectURL` pour un `<input type="file">`).
-- Extension possible, non demandée dans la V1 : rotation des doigts individuels (actuellement seule la rotation globale du poignet est retargetée), rotation de la clavicule (actuellement à zéro, voir "IK à deux os"), et pieds (actuellement rotation nulle faute de landmarks de pied dans le sous-ensemble utilisé).
+1. **Barre de menu** : Fichier (ouvrir un VRM, import/export des réglages), Views (visibilité des couches : caméra, détections brutes, détection lissée, squelette KeyPose, modèle), Settings.
+2. **Panneau gauche** : position par défaut (pose de repos + calibration, corps / mains séparés), paramètres de détection (Holistic / Composite, Worker / remote par détecteur, FPS par détecteur), affichage caméra / détections / détection lissée, paramètres de lissage.
+3. **Panneau droit** : debug de l'animation (valeurs relatives extraites, temps réel), réglages de retargeting.
+4. **Menu flottant en bas** : par articulation du modèle, offsets et paramètres du ressort de retour à la KeyPose.
+
+Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichier.
+
+## Feuille de route de la reconstruction
+
+1. ✅ Récupération + premier commit ; boucle minimale (`main.js`), chargement VRM 0.x/1.0 (liste, fichier, glisser-déposer), WASM MediaPipe servi localement, serveur de dev HTTPS sur 0.0.0.0 (certificat auto-signé dans `.cert/`, non versionné, voir `vite.config.js`).
+2. Coquille d'interface : barre de menu, panneaux gauche/droit, menu flottant bas, couches Views, persistance des réglages.
+3. Détection : backend Web Worker (Holistic + Composite), ordonnanceur FPS par détecteur, lissage des landmarks, surimpression (caméra, brut, lissé).
+4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
+5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug. Corrige au passage les défauts du noyau récupéré : repère MediaPipe (Y vers le bas) vs three.js, rotations globales vs locales, NaN du lisseur sur les canaux de visage.
+6. Suivi par ressort amorti + menu du bas (offsets, raideur/amortissement) + retargeting et butées dans le panneau droit.
+7. Backend remote : serveur Python (MediaPipe + WebRTC/aiortc), DataChannel, mode Composite mixte.
+8. Validation en conditions réelles, valeurs par défaut, documentation.
+
+Extensions non prioritaires : clavicule, pieds (landmarks 29-32), twist du poignet.
 
 ## Conventions
 

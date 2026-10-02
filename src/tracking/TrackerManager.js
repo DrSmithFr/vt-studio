@@ -4,8 +4,19 @@ import {
   PoseLandmarker,
   HandLandmarker,
 } from '@mediapipe/tasks-vision';
+import simdLoaderUrl from '@mediapipe/tasks-vision/vision_wasm_internal.js?url';
+import simdBinaryUrl from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url';
+import noSimdLoaderUrl from '@mediapipe/tasks-vision/vision_wasm_nosimd_internal.js?url';
+import noSimdBinaryUrl from '@mediapipe/tasks-vision/vision_wasm_nosimd_internal.wasm?url';
 
-const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+// Le runtime WASM est servi depuis le paquet npm installé plutôt que depuis
+// un CDN : sa version correspond forcément à celle du bundle JS (un écart
+// de version peut faire échouer l'initialisation).
+async function resolveWasmFileset() {
+  return (await FilesetResolver.isSimdSupported())
+    ? { wasmLoaderPath: simdLoaderUrl, wasmBinaryPath: simdBinaryUrl }
+    : { wasmLoaderPath: noSimdLoaderUrl, wasmBinaryPath: noSimdBinaryUrl };
+}
 const MODELS_BASE = 'https://storage.googleapis.com/mediapipe-models';
 
 // Charge les trois landmarkers MediaPipe Tasks Vision et pilote la boucle de
@@ -21,7 +32,7 @@ export class TrackerManager {
   }
 
   async init() {
-    const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+    const vision = await resolveWasmFileset();
 
     this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
       baseOptions: {
@@ -53,6 +64,13 @@ export class TrackerManager {
   }
 
   async startWebcam() {
+    // navigator.mediaDevices n'existe qu'en contexte sécurisé (HTTPS ou
+    // localhost) : page servie en HTTP depuis une adresse réseau.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw Object.assign(new Error('Webcam indisponible : la page doit être servie en HTTPS ou sur localhost.'), {
+        name: 'InsecureContext',
+      });
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 1280, height: 720 },
       audio: false,
