@@ -22,7 +22,20 @@ async function menu(page, title, ...path) {
 const row = (page, label) =>
   page.locator('.ctl-row', { has: page.locator('.ctl-label', { hasText: new RegExp(`^${label}$`) }) }).first();
 
-const readout = (page, label) => row(page, label).locator('.ctl-value');
+// Valeur en lecture seule : seules les lignes .ctl-readout (un même libellé,
+// ex. « Corps », existe aussi pour un choix d'exécution).
+const readout = (page, label) =>
+  page
+    .locator('.ctl-row.ctl-readout', { has: page.locator('.ctl-label', { hasText: new RegExp(`^${label}$`) }) })
+    .first()
+    .locator('.ctl-value');
+
+// Coche d'une entrée de menu (hors entrées à sous-menu, qui contiennent les
+// coches de leurs sous-entrées).
+const menuCheck = (page, label) =>
+  page
+    .locator('.menu-entry:not(.has-submenu)', { has: page.locator('.menu-label', { hasText: label }) })
+    .locator(':scope > .menu-check');
 
 // --- Interface ---------------------------------------------------------------
 
@@ -72,9 +85,8 @@ test('export puis import des réglages', async ({ page }) => {
     buffer: Buffer.from(JSON.stringify(exported)),
   });
   await menu(page, 'Settings', 'Cadrage');
-  await expect(
-    page.locator('.menu-entry', { has: page.locator('.menu-label', { hasText: 'Assis (buste)' }) }).locator('.menu-check'),
-  ).toHaveText('✓');
+  await expect(menuCheck(page, 'Assis (buste)')).toHaveText('✓');
+  await expect(menuCheck(page, 'Automatique')).toHaveText('');
 });
 
 test('chargement du modèle VRM 0.x fourni', async ({ page }) => {
@@ -93,11 +105,15 @@ test('menu des articulations : doigts disponibles, réponse du ressort affichée
 
 test('calibration impossible sans détection : message explicite', async ({ page }) => {
   await openApp(page);
-  const dialog = page.waitForEvent('dialog');
+  // La boîte de dialogue doit être fermée pendant le clic : sinon le clic
+  // attend sa fermeture et le test se bloque.
+  let message = null;
+  page.once('dialog', async (dialog) => {
+    message = dialog.message();
+    await dialog.dismiss();
+  });
   await page.locator('.ctl-button', { hasText: 'Calibrer le corps' }).click();
-  const message = await dialog;
-  expect(message.message()).toContain('Activez la détection');
-  await message.dismiss();
+  await expect.poll(() => message).toContain('Activez la détection');
 });
 
 test('détection distante sans adresse : erreur dans les statistiques', async ({ page }) => {
