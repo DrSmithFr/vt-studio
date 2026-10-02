@@ -10,7 +10,12 @@ import fs from 'node:fs';
 //     -keyout .cert/key.pem -out .cert/cert.pem -subj "/CN=vt-studio" \
 //     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:<ip-du-poste>"
 const CERT_DIR = new URL('./.cert/', import.meta.url);
-const hasCert = fs.existsSync(new URL('cert.pem', CERT_DIR)) && fs.existsSync(new URL('key.pem', CERT_DIR));
+// VT_HTTP=1 force le HTTP (tests e2e sur localhost, contexte sécurisé
+// même sans certificat).
+const hasCert =
+  !process.env.VT_HTTP &&
+  fs.existsSync(new URL('cert.pem', CERT_DIR)) &&
+  fs.existsSync(new URL('key.pem', CERT_DIR));
 
 export default defineConfig({
   // Workers de détection en modules ES : MediaPipe y charge son runtime WASM
