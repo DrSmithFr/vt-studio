@@ -1,6 +1,6 @@
 import { FEATURE_GROUPS } from '../core/FeatureSchema.js';
 import { JOINT_LABELS, mirrorGroupLabel } from '../core/JointSchema.js';
-import { ControlPanel, pendingBadge } from './controls.js';
+import { ControlPanel } from './controls.js';
 
 const RAD_TO_DEG = 180 / Math.PI;
 const AXES = ['x', 'y', 'z'];
@@ -20,7 +20,7 @@ export class RightPanel {
     this.panel = new ControlPanel(container, { onChange: () => store.commit() });
 
     // --- Valeurs relatives, lecture seule, mises à jour par setFeatures().
-    const featuresSection = this.panel.section('Valeurs relatives', { badge: pendingBadge(4) });
+    const featuresSection = this.panel.section('Valeurs relatives');
     this.featureReadouts = [];
     for (const group of FEATURE_GROUPS) {
       const section = featuresSection.section(group.title, { open: !group.title.startsWith('Doigts') });
@@ -39,8 +39,11 @@ export class RightPanel {
     sides.toggle(r.sideInversion, 'legs', { label: 'Jambes' });
 
     const groups = retarget.section('Par articulation', { open: false });
+    const bodyGroups = groups.section('Corps et visage', { open: false });
+    const fingerGroups = groups.section('Doigts', { open: false });
     for (const groupKey of Object.keys(r.axisInvert)) {
-      const section = groups.section(mirrorGroupLabel(groupKey), { open: false });
+      const parent = /Thumb|Index|Middle|Ring|Little/.test(groupKey) ? fingerGroups : bodyGroups;
+      const section = parent.section(mirrorGroupLabel(groupKey), { open: false });
       for (const axis of AXES) {
         section.toggle(r.axisInvert[groupKey], axis, { label: `Inverser ${axis.toUpperCase()}` });
       }
@@ -53,6 +56,12 @@ export class RightPanel {
         });
       }
     }
+
+    // --- Déplacement du bassin à partir de sa position à l'écran (latéral)
+    // et de la hauteur des épaules (vertical, une fois le corps calibré).
+    const motion = this.panel.section('Mouvement', { open: false });
+    motion.slider(settings.motion, 'lateralRange', { label: 'Amplitude latérale', min: 0, max: 3, step: 0.05, unit: 'm' });
+    motion.slider(settings.motion, 'verticalRange', { label: 'Amplitude verticale', min: 0, max: 3, step: 0.05, unit: 'm' });
 
     // --- Butées par articulation (JointConstraints), affichées en degrés.
     const limits = this.panel.section('Butées', { open: false });

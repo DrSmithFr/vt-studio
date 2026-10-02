@@ -28,7 +28,8 @@ src/
   core/
     JointSchema.js       — liste des articulations/canaux, paires miroir, groupes de réglage fusionnés
     Smoother.js           — lissage exponentiel indépendant par articulation et par axe
-    GlobalSkeleton.js      — fusion pose + visage + mains en une pose brute unique, avec substitution des mains
+    FeatureExtractor.js    — détection lissée → valeurs relatives (tronc, tête, bras, mains, poignets, jambes, doigts) + expressions ; toute la géométrie des landmarks
+    KeyPoseBuilder.js      — valeurs relatives → KeyPose (rotations locales + déplacement du bassin), poses de repos corps / mains
     TwoBoneIK.js            — IK analytique à deux os (loi des cosinus) pour bras et jambes
     CollisionAvoidance.js   — repousse une cible de main hors d'une capsule représentant le torse
     JointConstraints.js     — butées angulaires par articulation (rigidité), appliquées après le retargeting
@@ -61,15 +62,25 @@ index.html
 
 ## Concepts clés
 
-### Squelette global (`core/GlobalSkeleton.js`)
+### Valeurs relatives (`core/FeatureExtractor.js`, `core/FeatureSchema.js`)
 
-Convertit les landmarks bruts de chaque détecteur en un objet `{ [nom]: {x,y,z} }` :
+Toute la géométrie liée aux landmarks est dans `FeatureExtractor.extract(detection, { mirror, aspect, framing, calibration })`, qui renvoie `{ raw, values, has, expressions }` :
 
-- Chaque rotation est **locale** (repère de l'os parent, T-pose VRM normalisée), calculée comme le swing minimal amenant la direction de repos sur la direction observée.
-- Les bras et les jambes sont résolus par **IK à deux os** (`core/TwoBoneIK.js`, voir section dédiée ci-dessous), pas par deux rotations de segment indépendantes.
-- La clavicule (`leftShoulder`/`rightShoulder`) est laissée à zéro pour l'instant (voir "Reste à faire").
-- Les mains utilisent d'abord une rotation de repli dérivée de la pose (poignet→index), puis sont **remplacées** par la rotation dérivée de `HandLandmarker` (poignet→base du majeur) si une main est détectée cette frame-là - c'est l'exigence de priorité aux mains.
-- Les canaux de visage (`leftEyeBlink`, `mouthOpen`, etc.) viennent directement des blendshapes de `FaceLandmarker` (`outputFaceBlendshapes: true`), pas d'une rotation.
+- **Repère de l'avatar** : `toAvatar` convertit MediaPipe (y bas, z s'éloignant) en (x, -y, -z) ; en miroir, x est inversé et les côtés échangés (la main gauche de la personne pilote le côté droit de l'avatar). Toutes les clés `left*/right*` des valeurs sont des côtés **de l'avatar**.
+- **Tronc** : `pelvisX` (position du bassin à l'écran, centrée), `shouldersY` (hauteur des épaules), `pelvisYaw`, `spineAngle` (inclinaison latérale), `spineLean` (avant/arrière), `spineTwist` (rotation des épaules par rapport au bassin). `torsoQuaternions(values)` reconstruit hips/spine/chest (inclinaisons réparties à moitié entre spine et chest) et sert aux deux côtés (extraction et reconstruction) pour que les bras soient mesurés et reconstruits dans le même repère.
+- **Tête** : orientation tirée du maillage du visage (coins des yeux, front, menton), relative à la poitrine.
+- **Bras** : IK à deux os (voir plus bas), puis élévation / azimut du bras dans le repère **réel** de la poitrine (non calibré) et position de la main en longueurs de bras.
+- **Poignet** : orientation complète (twist compris) à partir du repère de la paume (HandLandmarker si la main est détectée, sinon poignet / index / auriculaire de la pose), relative à l'avant-bras reconstruit.
+- **Doigts** : dans le repère de la paume, flexion et écart de la 1re phalange, flexion cumulée du bout.
+- **Calibration** : les clés marquées `calibration: 'body' | 'hands'` dans `FeatureSchema` sont exprimées relativement à une référence (`settings.calibration`), capturée par les boutons du panneau gauche (compte à rebours de 3 s, moyenne circulaire sur 0,6 s).
+
+### KeyPose (`core/KeyPoseBuilder.js`, `render/KeyPoseSkeleton.js`)
+
+`KeyPoseBuilder.build(extraction, { restPose, motion, bodyCalibrated })` reconstruit la pose **uniquement** à partir des valeurs relatives : tronc, tête (40 % cou / 60 % tête), bras (direction du bras + avant-bras vers la position de la main, proportion bras/avant-bras du modèle), poignet, jambes, doigts (axes de flexion / écart déduits de la direction de repos de chaque phalange dans le modèle, `VrmController.getRestInfo()`), et déplacement du bassin (`motion.lateralRange` ; vertical seulement après calibration du corps). Parties non détectées → poses de repos (`BODY_REST_POSES`, `HAND_REST_POSES`).
+
+`KeyPoseSkeleton` duplique la hiérarchie des os normalisés du modèle et affiche la cible (couche « Squelette KeyPose ») ; le modèle visible la suit (lissage par articulation en attendant le ressort de la phase 6).
+
+Rotations calculées dans le repère VRM 1.0 ; `VrmController.toModelQuaternion` les convertit pour un modèle VRM 0.x (x et z inversés, repère local tourné de π).
 
 ### IK à deux os (`core/TwoBoneIK.js`)
 
@@ -81,7 +92,7 @@ Corrige le problème initial de tremblement des bras : calculer la rotation de c
 2. Calcule l'angle de flexion **analytiquement**, par la loi des cosinus, à partir des longueurs de segment - jamais à partir de la profondeur brute du hint.
 3. N'utilise le landmark intermédiaire (`hint`, coude/genou) que pour définir le plan de flexion (de quel côté plier), via un produit vectoriel - pas pour la distance de flexion.
 
-Les longueurs de segment (`upperLength`/`lowerLength`) sont calibrées progressivement par moyenne mobile lente (`GlobalSkeletonBuilder.#calibrateLength`, α = 0.05) plutôt que mesurées frame par frame, pour la même raison : une distance instantanée reste sensible au bruit, une longueur qui se stabilise sur quelques secondes ne l'est plus.
+Les longueurs de segment (`upperLength`/`lowerLength`) sont calibrées progressivement par moyenne mobile lente (`FeatureExtractor.#calibrateLength`, α = 0.05) plutôt que mesurées frame par frame, pour la même raison : une distance instantanée reste sensible au bruit, une longueur qui se stabilise sur quelques secondes ne l'est plus.
 
 Appliqué aux bras (épaule → coude-indice → poignet-cible) et aux jambes (hanche → genou-indice → cheville-cible).
 
@@ -155,8 +166,8 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 1. ✅ Récupération + premier commit ; boucle minimale (`main.js`), chargement VRM 0.x/1.0 (liste, fichier, glisser-déposer), WASM MediaPipe servi localement, serveur de dev HTTPS sur 0.0.0.0 (certificat auto-signé dans `.cert/`, non versionné, voir `vite.config.js`).
 2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`pendingBadge`).
 3. ✅ Détection : un Web Worker par détecteur (Holistic ou Composite), ordonnanceur FPS par détecteur, modèle de pose lite/full/heavy, statistiques (FPS effectif, inférence, GPU/CPU), lissage des landmarks (`DetectionSmoother`), surimpression brute / lissée. Points d'attention : les workers sont des modules ES (`worker.format: 'es'` dans `vite.config.js`) et utilisent la variante « module » du WASM MediaPipe ; HandLandmarker étiquette la latéralité en supposant une image miroir, d'où l'inversion Left→droite dans `detectors.js` (confirmé visuellement grâce aux étiquettes G/D). Holistic tourne toujours sur CPU (`CPU_ONLY` dans `detection.worker.js`) : son FaceBlendshapesGraph n'est pas supporté en WebGL et l'échec n'est que journalisé par le runtime WASM, sans exception détectable.
-4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
-5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug.
+4. ✅ Calibration (corps / mains, compte à rebours) + poses de repos + extraction des valeurs relatives (panneau droit).
+5. ✅ KeyPose : reconstruite depuis les seules valeurs relatives (tronc, tête, bras, poignets avec twist, jambes, doigts, déplacement du bassin), squelette dupliqué affiché (couche KeyPose), conversion VRM 0.x. Aller-retour extraction → reconstruction vérifié numériquement (bras, coude, genou, index, orientation de la tête, direct et miroir).
    Déjà corrigé en avance (défauts du noyau récupéré) : conversion du repère MediaPipe (y bas, z s'éloignant) vers celui de l'avatar (`toAvatarSpace` : (x, -y, -z), x inversé en miroir) ; directions de repos de la T-pose VRM normalisée (bras ±X, colonne +Y, jambes -Y) ; rotations **locales** calculées os par os dans le repère du parent (`swingRotation` dans `utils/MathUtils.js`) ; miroir de l'avatar au niveau des landmarks (côtés échangés + x inversé, réglage `general.mirrorAvatar`) ; jambes figées selon le cadrage ; angles déroulés dans `Smoother` (plus de saut à ±π) ; NaN des canaux de visage. Vérifié numériquement (T-pose, bras le long du corps, bras vers la caméra, coude plié, direct et miroir).
 6. Suivi par ressort amorti + menu du bas (offsets, raideur/amortissement) + retargeting et butées dans le panneau droit.
 7. Backend remote : serveur Python (MediaPipe + WebRTC/aiortc), DataChannel, mode Composite mixte.

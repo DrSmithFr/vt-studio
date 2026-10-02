@@ -1,4 +1,19 @@
-import { BODY_JOINTS } from '../core/JointSchema.js';
+import { ROTATION_JOINTS } from '../core/JointSchema.js';
+import { CALIBRATED_KEYS, fingerFeatureKey } from '../core/FeatureSchema.js';
+
+// Références de calibration par défaut : zéro partout, sauf le pouce dont la
+// position naturelle main ouverte est écartée et légèrement fléchie par
+// rapport au plan de la paume (valeurs approximatives, remplacées par la
+// calibration des mains).
+function defaultCalibration() {
+  const body = Object.fromEntries(CALIBRATED_KEYS.body.map((key) => [key, 0]));
+  const hands = Object.fromEntries(CALIBRATED_KEYS.hands.map((key) => [key, 0]));
+  for (const side of ['left', 'right']) {
+    hands[fingerFeatureKey(side, 'thumb', 'baseSpread')] = 0.6;
+    hands[fingerFeatureKey(side, 'thumb', 'baseFlex')] = 0.3;
+  }
+  return { body, hands, bodyCalibrated: false, handsCalibrated: false };
+}
 
 const STORAGE_KEY = 'vt-studio.settings';
 const SETTINGS_VERSION = 1;
@@ -64,6 +79,17 @@ export function createDefaultSettings() {
       hands: 'relaxed', // 'relaxed' | 'open' | 'fist'
     },
 
+    // Panneau gauche : calibration (valeurs relatives de référence, voir
+    // FeatureSchema). `bodyCalibrated` conditionne le déplacement vertical.
+    calibration: defaultCalibration(),
+
+    // Panneau droit : déplacement du bassin (m par unité de valeur
+    // relative : largeur d'écran pour le latéral, hauteur pour le vertical).
+    motion: {
+      lateralRange: 1.0,
+      verticalRange: 0.8,
+    },
+
     // Panneau droit : retargeting (même structure que RetargetConfig).
     retarget: {
       sideInversion: { arms: false, hands: false, legs: false },
@@ -89,7 +115,7 @@ export function createDefaultSettings() {
     // Menu flottant du bas : par articulation, offset (radians) et ressort
     // de retour à la KeyPose.
     joints: Object.fromEntries(
-      BODY_JOINTS.map((name) => [
+      ROTATION_JOINTS.map((name) => [
         name,
         { offset: { x: 0, y: 0, z: 0 }, stiffness: 120, damping: 18 },
       ]),

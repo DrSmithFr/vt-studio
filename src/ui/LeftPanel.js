@@ -1,4 +1,4 @@
-import { ControlPanel, pendingBadge } from './controls.js';
+import { ControlPanel } from './controls.js';
 
 const BACKEND_OPTIONS = { Worker: 'worker', Distant: 'remote' };
 
@@ -14,7 +14,8 @@ function formatStats(stats) {
 
 // Panneau gauche : position par défaut, détection, affichage, lissage.
 export class LeftPanel {
-  // `actions` : { calibrateBody(), calibrateHands() } — fournies par main.js.
+  // `actions` : { calibrateBody(), calibrateHands(), resetCalibration() } —
+  // fournies par main.js.
   constructor(container, store, actions = {}) {
     const settings = store.data;
     this.panel = new ControlPanel(container, {
@@ -25,7 +26,7 @@ export class LeftPanel {
     });
 
     // --- Position par défaut : pose de repos + calibration, corps / mains.
-    const rest = this.panel.section('Position par défaut', { badge: pendingBadge(4) });
+    const rest = this.panel.section('Position par défaut');
     rest.select(
       settings.restPose,
       'body',
@@ -35,8 +36,15 @@ export class LeftPanel {
     rest.select(settings.restPose, 'hands', { Détendues: 'relaxed', Ouvertes: 'open', Poing: 'fist' }, {
       label: 'Repos des mains',
     });
-    rest.button('Calibrer le corps', () => actions.calibrateBody?.()).disable();
-    rest.button('Calibrer les mains', () => actions.calibrateHands?.()).disable();
+    // Calibration : la posture tenue pendant la capture devient le zéro des
+    // valeurs relatives (corps : droit, face caméra ; mains : ouvertes,
+    // doigts tendus et serrés).
+    this.calibrationButtons = {
+      body: rest.button('Calibrer le corps', () => actions.calibrateBody?.()),
+      hands: rest.button('Calibrer les mains', () => actions.calibrateHands?.()),
+    };
+    this.calibrationStatus = rest.readout('Calibration');
+    rest.button('Réinitialiser la calibration', () => actions.resetCalibration?.());
 
     // --- Détection.
     const detection = this.panel.section('Détection');
@@ -88,6 +96,15 @@ export class LeftPanel {
     for (const control of this.compositeControls) control.show(!holistic);
     this.statReadouts.holistic.show(holistic);
     for (const id of ['pose', 'face', 'hand']) this.statReadouts[id].show(!holistic);
+  }
+
+  // `labels` : { body, hands } — texte des boutons (compte à rebours) ;
+  // `calibration` : réglages de calibration (état affiché).
+  setCalibrationState(labels, calibration) {
+    this.calibrationButtons.body.setLabel(labels.body ?? 'Calibrer le corps');
+    this.calibrationButtons.hands.setLabel(labels.hands ?? 'Calibrer les mains');
+    const state = (done) => (done ? 'fait' : 'par défaut');
+    this.calibrationStatus.set(`corps ${state(calibration.bodyCalibrated)} · mains ${state(calibration.handsCalibrated)}`);
   }
 
   // `stats` : TrackerManager.getStats().

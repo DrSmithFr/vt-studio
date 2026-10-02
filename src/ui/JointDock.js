@@ -1,4 +1,4 @@
-import { BODY_JOINTS, JOINT_LABELS } from '../core/JointSchema.js';
+import { BODY_JOINTS, FINGER_JOINTS, JOINT_LABELS, ROTATION_JOINTS } from '../core/JointSchema.js';
 import { ControlPanel, pendingBadge } from './controls.js';
 
 // Menu flottant en bas de la vue : pour l'articulation choisie, offsets
@@ -16,8 +16,16 @@ export class JointDock {
     const title = document.createElement('span');
     title.textContent = 'Articulation';
     this.select = document.createElement('select');
-    for (const joint of BODY_JOINTS) {
-      this.select.add(new Option(JOINT_LABELS[joint] ?? joint, joint));
+    const groups = [
+      ['Corps', BODY_JOINTS],
+      ['Doigts G', FINGER_JOINTS.filter((j) => j.startsWith('left'))],
+      ['Doigts D', FINGER_JOINTS.filter((j) => j.startsWith('right'))],
+    ];
+    for (const [label, joints] of groups) {
+      const group = document.createElement('optgroup');
+      group.label = label;
+      for (const joint of joints) group.append(new Option(JOINT_LABELS[joint] ?? joint, joint));
+      this.select.append(group);
     }
     this.select.addEventListener('change', () => this.selectJoint(this.select.value));
     const resetButton = document.createElement('button');
@@ -40,7 +48,7 @@ export class JointDock {
   // Sélectionne une articulation (liste déroulante, ou plus tard clic sur le
   // modèle).
   selectJoint(joint) {
-    if (!BODY_JOINTS.includes(joint)) return;
+    if (!ROTATION_JOINTS.includes(joint)) return;
     this.selected = joint;
     this.select.value = joint;
     this.#build();

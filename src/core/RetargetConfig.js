@@ -1,4 +1,4 @@
-import { AXES, ALL_CHANNELS, MIRROR_PAIRS, mirrorGroupKey } from './JointSchema.js';
+import { AXES, ALL_CHANNELS, FINGER_JOINTS, MIRROR_PAIRS, mirrorGroupKey } from './JointSchema.js';
 
 // Regroupe tous les réglages exposés dans le panneau de débogage :
 //
@@ -47,7 +47,7 @@ export class RetargetConfig {
 
 const SIDE_GROUPS = {
   arms: ['leftShoulder', 'rightShoulder', 'leftUpperArm', 'rightUpperArm', 'leftLowerArm', 'rightLowerArm'],
-  hands: ['leftHand', 'rightHand'],
+  hands: ['leftHand', 'rightHand', ...FINGER_JOINTS],
   legs: ['leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg', 'leftFoot', 'rightFoot'],
 };
 

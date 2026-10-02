@@ -203,7 +203,12 @@ export class Section {
     button.addEventListener('click', () => onClick());
     row.append(button);
     this.body.append(row);
-    return this.#register({ element: row }, null, [button]);
+    const control = this.#register({ element: row }, null, [button]);
+    control.setLabel = (text) => {
+      button.textContent = text;
+      return control;
+    };
+    return control;
   }
 
   // Valeur en lecture seule, mise à jour par set(texte). Le DOM n'est touché

@@ -32,6 +32,28 @@ export const BODY_JOINTS = [
   'rightFoot',
 ];
 
+// Doigts : os humanoïdes VRM 1.0 (three-vrm convertit les noms VRM 0.x,
+// dont thumbProximal → thumbMetacarpal). Trois phalanges par doigt.
+export const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Little'];
+export const FINGER_SEGMENTS = {
+  Thumb: ['Metacarpal', 'Proximal', 'Distal'],
+  Index: ['Proximal', 'Intermediate', 'Distal'],
+  Middle: ['Proximal', 'Intermediate', 'Distal'],
+  Ring: ['Proximal', 'Intermediate', 'Distal'],
+  Little: ['Proximal', 'Intermediate', 'Distal'],
+};
+
+export function fingerBone(side, finger, segmentIndex) {
+  return `${side}${finger}${FINGER_SEGMENTS[finger][segmentIndex]}`;
+}
+
+export const FINGER_JOINTS = ['left', 'right'].flatMap((side) =>
+  FINGERS.flatMap((finger) => FINGER_SEGMENTS[finger].map((_, i) => fingerBone(side, finger, i))),
+);
+
+// Toutes les articulations en rotation (corps + doigts).
+export const ROTATION_JOINTS = [...BODY_JOINTS, ...FINGER_JOINTS];
+
 // Canaux d'expression faciale. Ce ne sont pas des rotations d'articulation
 // mais des valeurs 0-1 (ou -1..1 pour les sourcils), lissées et amplifiées
 // de la même façon que les articulations.
@@ -44,7 +66,7 @@ export const FACE_CHANNELS = [
   'mouthWide',
 ];
 
-export const ALL_CHANNELS = [...BODY_JOINTS, ...FACE_CHANNELS];
+export const ALL_CHANNELS = [...ROTATION_JOINTS, ...FACE_CHANNELS];
 
 // Paires miroir : la clé et la valeur partagent le même réglage d'inversion
 // et d'amplification par axe.
@@ -58,6 +80,7 @@ export const MIRROR_PAIRS = [
   ['leftFoot', 'rightFoot'],
   ['leftEyeBlink', 'rightEyeBlink'],
   ['leftEyebrowRaise', 'rightEyebrowRaise'],
+  ...FINGER_JOINTS.filter((name) => name.startsWith('left')).map((name) => [name, name.replace(/^left/, 'right')]),
 ];
 
 // Articulations sans paire (axe central, ou traitées individuellement).
@@ -108,6 +131,17 @@ export const JOINT_LABELS = {
   mouthOpen: 'Bouche ouverte',
   mouthWide: 'Bouche étirée',
 };
+
+const FINGER_LABELS = { Thumb: 'Pouce', Index: 'Index', Middle: 'Majeur', Ring: 'Annulaire', Little: 'Auriculaire' };
+const SEGMENT_LABELS = { Metacarpal: 'métacarpe', Proximal: '1', Intermediate: '2', Distal: '3' };
+for (const side of ['left', 'right']) {
+  for (const finger of FINGERS) {
+    FINGER_SEGMENTS[finger].forEach((segment, i) => {
+      JOINT_LABELS[fingerBone(side, finger, i)] =
+        `${FINGER_LABELS[finger]} ${SEGMENT_LABELS[segment]} ${side === 'left' ? 'G' : 'D'}`;
+    });
+  }
+}
 
 // Libellé d'un groupe de réglage (voir mirrorGroupKey) : une paire miroir
 // est affichée sous un nom commun, sans le suffixe de côté.

@@ -1,6 +1,8 @@
 import './style.css';
-import { ALL_CHANNELS, AXES, BODY_JOINTS } from './core/JointSchema.js';
-import { GlobalSkeletonBuilder } from './core/GlobalSkeleton.js';
+import { ALL_CHANNELS, AXES, ROTATION_JOINTS } from './core/JointSchema.js';
+import { CALIBRATED_KEYS } from './core/FeatureSchema.js';
+import { FeatureExtractor } from './core/FeatureExtractor.js';
+import { KeyPoseBuilder } from './core/KeyPoseBuilder.js';
 import { SkeletonSmoother } from './core/Smoother.js';
 import { DetectionSmoother } from './core/DetectionSmoother.js';
 import { RetargetConfig, applyRetargeting } from './core/RetargetConfig.js';
@@ -9,6 +11,7 @@ import { TrackerManager } from './tracking/TrackerManager.js';
 import { VrmController } from './vrm/VrmController.js';
 import { SceneManager } from './render/SceneManager.js';
 import { OverlayRenderer } from './render/OverlayRenderer.js';
+import { KeyPoseSkeleton } from './render/KeyPoseSkeleton.js';
 import { SettingsStore, createDefaultSettings } from './ui/SettingsStore.js';
 import { MenuBar } from './ui/MenuBar.js';
 import { LeftPanel } from './ui/LeftPanel.js';
@@ -39,8 +42,13 @@ const vrmController = new VrmController(sceneManager.scene);
 const overlayRenderer = new OverlayRenderer(overlayCanvas);
 const trackerManager = new TrackerManager(video);
 const detectionSmoother = new DetectionSmoother();
-const globalSkeletonBuilder = new GlobalSkeletonBuilder();
-const skeletonSmoother = new SkeletonSmoother(ALL_CHANNELS, 80, BODY_JOINTS);
+const featureExtractor = new FeatureExtractor();
+const keyPoseBuilder = new KeyPoseBuilder();
+const keyPoseSkeleton = new KeyPoseSkeleton(sceneManager.scene);
+// Suivi de la KeyPose par le modèle (lissage par articulation, remplacé par
+// un ressort amorti en phase 6). Le déplacement du bassin est un canal
+// supplémentaire, non angulaire.
+const skeletonSmoother = new SkeletonSmoother([...ALL_CHANNELS, 'hipsOffset'], 80, ROTATION_JOINTS);
 const retargetConfig = new RetargetConfig();
 const jointConstraints = new JointConstraints();
 
@@ -76,7 +84,7 @@ function applySettings() {
   sceneManager.setBackgroundVisible(!settings.layers.camera);
   vrmController.setVisible(settings.layers.model);
   vrmController.setTransform(settings.model);
-  globalSkeletonBuilder.torsoRadius = settings.collision.torsoRadius;
+  featureExtractor.torsoRadius = settings.collision.torsoRadius;
   // Ne recrée les détecteurs que si le mode, un backend ou le modèle change.
   const wasActive = trackerManager.active;
   trackerManager.configure(settings.detection);
@@ -84,6 +92,7 @@ function applySettings() {
   // repartent de zéro à la prochaine activation.
   if (wasActive && !trackerManager.active) {
     vrmController.resetPose();
+    keyPoseSkeleton.update({}, null, false);
     skeletonSmoother.reset();
     detectionSmoother.reset();
     overlayRenderer.clear();
@@ -95,7 +104,11 @@ store.subscribe(applySettings);
 
 // --- Interface ------------------------------------------------------------------
 
-const leftPanel = new LeftPanel(document.getElementById('left-panel'), store);
+const leftPanel = new LeftPanel(document.getElementById('left-panel'), store, {
+  calibrateBody: () => startCalibration('body'),
+  calibrateHands: () => startCalibration('hands'),
+  resetCalibration,
+});
 const rightPanel = new RightPanel(document.getElementById('right-panel'), store);
 const jointDock = new JointDock(document.getElementById('joint-dock'), store);
 
@@ -105,6 +118,7 @@ function refreshUi() {
   leftPanel.refresh(settings);
   rightPanel.refresh();
   jointDock.refresh();
+  refreshCalibrationUi();
 }
 
 function toggle(obj, key) {
@@ -242,8 +256,11 @@ async function loadModel(source, label) {
     }
     status.model = `${label} (VRM ${vrmController.metaVersion === '0' ? '0.x' : '1.0'})`;
     // Transform et visibilité s'appliquent au modèle courant : à refaire
-    // pour le nouveau.
+    // pour le nouveau. Proportions et squelette dupliqué dépendent du modèle.
     applySettings();
+    const rest = vrmController.getRestInfo();
+    if (rest) keyPoseBuilder.setModelRest(rest);
+    keyPoseSkeleton.attach(vrmController);
   } catch (error) {
     console.error(error);
     status.model = `échec du chargement de ${label}`;
@@ -297,6 +314,101 @@ async function startTracking() {
   renderStatus();
 }
 
+function videoAspect() {
+  const { width, height } = trackerManager.videoSize;
+  return width && height ? width / height : 16 / 9;
+}
+
+// --- Calibration -----------------------------------------------------------------
+// Compte à rebours (le temps de prendre la posture), puis moyenne des valeurs
+// brutes sur une courte fenêtre : elles deviennent le zéro de référence.
+
+const CALIBRATION_COUNTDOWN_S = 3;
+const CALIBRATION_WINDOW_MS = 600;
+let calibrationCapture = null;
+const calibrationLabels = {};
+
+function refreshCalibrationUi() {
+  leftPanel.setCalibrationState(calibrationLabels, settings.calibration);
+}
+
+function startCalibration(group) {
+  if (calibrationCapture) return;
+  if (!trackerManager.active) {
+    alert('Activez la détection (D) avant de calibrer.');
+    return;
+  }
+  const name = group === 'body' ? 'corps' : 'mains';
+  let remaining = CALIBRATION_COUNTDOWN_S;
+  calibrationLabels[group] = `Prenez la pose… ${remaining}`;
+  refreshCalibrationUi();
+  const timer = setInterval(() => {
+    remaining--;
+    if (remaining > 0) {
+      calibrationLabels[group] = `Prenez la pose… ${remaining}`;
+      refreshCalibrationUi();
+      return;
+    }
+    clearInterval(timer);
+    calibrationLabels[group] = 'Capture…';
+    refreshCalibrationUi();
+    calibrationCapture = createCalibrationCapture(group, (reference, count) => {
+      calibrationCapture = null;
+      delete calibrationLabels[group];
+      if (count === 0) {
+        alert(`Calibration ${name} impossible : rien n'a été détecté pendant la capture.`);
+      } else {
+        Object.assign(settings.calibration[group], reference);
+        settings.calibration[group === 'body' ? 'bodyCalibrated' : 'handsCalibrated'] = true;
+        store.commit();
+      }
+      refreshCalibrationUi();
+    });
+  }, 1000);
+}
+
+// Accumule les valeurs brutes des clés calibrées par le groupe. Angles :
+// moyenne circulaire (pas de saut à ±π) ; positions : moyenne simple. Pour
+// les mains, seuls les côtés détectés pendant la capture sont mis à jour.
+function createCalibrationCapture(group, done) {
+  const startMs = performance.now();
+  const sums = {};
+  let count = 0;
+  return {
+    collect({ raw, has }) {
+      const usable = group === 'body' ? has.body : has.left || has.right;
+      if (usable) {
+        count++;
+        for (const key of CALIBRATED_KEYS[group]) {
+          const value = raw[key];
+          if (value === undefined) continue;
+          sums[key] ??= { sin: 0, cos: 0, sum: 0, n: 0 };
+          sums[key].sin += Math.sin(value);
+          sums[key].cos += Math.cos(value);
+          sums[key].sum += value;
+          sums[key].n++;
+        }
+      }
+      if (performance.now() - startMs < CALIBRATION_WINDOW_MS) return;
+      const reference = {};
+      for (const [key, { sin, cos, sum, n }] of Object.entries(sums)) {
+        const linear = key === 'pelvisX' || key === 'shouldersY';
+        reference[key] = linear ? sum / n : Math.atan2(sin, cos);
+      }
+      done(reference, count);
+    },
+  };
+}
+
+function resetCalibration() {
+  Object.assign(settings.calibration.body, store.defaults.calibration.body);
+  Object.assign(settings.calibration.hands, store.defaults.calibration.hands);
+  settings.calibration.bodyCalibrated = false;
+  settings.calibration.handsCalibrated = false;
+  store.commit();
+  refreshCalibrationUi();
+}
+
 // Offsets par articulation (menu du bas), ajoutés en dernier à la pose.
 function applyJointOffsets(pose) {
   for (const [name, { offset }] of Object.entries(settings.joints)) {
@@ -325,14 +437,28 @@ function frame() {
     const rawDetection = trackerManager.getLatest(timestampMs);
     const detection = detectionSmoother.update(rawDetection, settings.smoothing);
 
-    const rawPose = globalSkeletonBuilder.build(detection, {
+    // Valeurs relatives → KeyPose (cible) → retargeting, butées, offsets.
+    const extraction = featureExtractor.extract(detection, {
       mirror: settings.general.mirrorAvatar,
+      aspect: videoAspect(),
       framing: settings.general.framing,
+      calibration: settings.calibration,
     });
-    const smoothedPose = skeletonSmoother.update(rawPose, dtMs);
-    const retargeted = applyRetargeting(smoothedPose, retargetConfig);
-    const outputPose = applyJointOffsets(jointConstraints.apply(retargeted));
-    vrmController.applyPose(outputPose);
+    calibrationCapture?.collect(extraction);
+    rightPanel.setFeatures(extraction.values);
+
+    const keyPose = keyPoseBuilder.build(extraction, {
+      restPose: settings.restPose,
+      motion: settings.motion,
+      bodyCalibrated: settings.calibration.bodyCalibrated,
+    });
+    const target = applyJointOffsets(jointConstraints.apply(applyRetargeting(keyPose.pose, retargetConfig)));
+    target.hipsOffset = keyPose.hipsOffset;
+    keyPoseSkeleton.update(target, target.hipsOffset, settings.layers.keyPose);
+
+    // Le modèle suit la cible.
+    const output = skeletonSmoother.update(target, dtMs);
+    vrmController.applyPose(output, output.hipsOffset);
 
     overlayRenderer.draw({
       raw: rawDetection,
@@ -359,6 +485,7 @@ function frame() {
 }
 
 applySettings();
+refreshCalibrationUi();
 renderStatus();
 loadModel(BUNDLED_MODELS[0].url, BUNDLED_MODELS[0].label);
 startTracking();

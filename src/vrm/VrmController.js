@@ -1,31 +1,14 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { FINGERS, ROTATION_JOINTS, fingerBone } from '../core/JointSchema.js';
 
-// Les noms d'articulation du squelette global (JointSchema.js) sont choisis
-// pour correspondre directement aux noms d'os humanoïdes VRM : le mapping
-// est donc l'identité pour la quasi-totalité des articulations.
-const JOINT_TO_VRM_BONE = {
-  hips: 'hips',
-  spine: 'spine',
-  chest: 'chest',
-  neck: 'neck',
-  head: 'head',
-  leftShoulder: 'leftShoulder',
-  rightShoulder: 'rightShoulder',
-  leftUpperArm: 'leftUpperArm',
-  rightUpperArm: 'rightUpperArm',
-  leftLowerArm: 'leftLowerArm',
-  rightLowerArm: 'rightLowerArm',
-  leftHand: 'leftHand',
-  rightHand: 'rightHand',
-  leftUpperLeg: 'leftUpperLeg',
-  rightUpperLeg: 'rightUpperLeg',
-  leftLowerLeg: 'leftLowerLeg',
-  rightLowerLeg: 'rightLowerLeg',
-  leftFoot: 'leftFoot',
-  rightFoot: 'rightFoot',
-};
+// Les noms d'articulation (JointSchema.js) sont ceux des os humanoïdes VRM
+// 1.0 (corps et doigts) : le mapping est l'identité.
+const JOINT_TO_VRM_BONE = Object.fromEntries(ROTATION_JOINTS.map((name) => [name, name]));
+
+const _quaternion = new THREE.Quaternion();
+const _euler = new THREE.Euler();
 
 // Canaux de visage sans expression VRM standard équivalente (browRaise n'a
 // pas de préréglage VRM 1.0). Extension possible via une expression
@@ -60,6 +43,11 @@ export class VrmController {
 
     this.vrm = vrm;
     this.baseYaw = vrm.scene.rotation.y;
+    // Les rotations sont calculées dans le repère VRM 1.0 (avatar tourné
+    // vers +Z). Un modèle VRM 0.x a son repère local tourné de π autour de
+    // Y : ses rotations et déplacements sont convertis (x et z inversés).
+    this.isVrm0 = vrm.meta?.metaVersion === '0';
+    this.hipsRestPosition = vrm.humanoid?.getNormalizedBoneNode('hips')?.position.clone() ?? null;
     this.scene.add(vrm.scene);
     return vrm;
   }
@@ -101,9 +89,44 @@ export class VrmController {
     if (scale !== undefined) root.scale.setScalar(scale);
   }
 
-  // Applique le squelette global (déjà lissé et retargeté) au modèle VRM :
-  // rotations d'os humanoïdes puis expressions faciales.
-  applyPose(outputPose) {
+  // Données de repos du modèle utiles à la reconstruction (KeyPoseBuilder),
+  // dans le repère VRM 1.0 : direction de chaque phalange et proportion
+  // bras / (bras + avant-bras). Le squelette normalisé est en T-pose avec des
+  // rotations nulles : la position d'un os enfant est directement la
+  // direction de son parent.
+  getRestInfo() {
+    const humanoid = this.vrm?.humanoid;
+    if (!humanoid) return null;
+    const node = (name) => humanoid.getNormalizedBoneNode(name);
+    const toVrm1 = (v) => (this.isVrm0 ? new THREE.Vector3(-v.x, v.y, -v.z) : v.clone());
+
+    const fingerDirections = {};
+    for (const side of ['left', 'right']) {
+      for (const finger of FINGERS) {
+        let previous = null;
+        for (let i = 0; i < 3; i++) {
+          const child = i < 2 ? node(fingerBone(side, finger, i + 1)) : null;
+          // Dernière phalange (pas d'os enfant) : même direction que la
+          // précédente.
+          const direction = child && child.position.lengthSq() > 0 ? toVrm1(child.position).normalize() : previous;
+          if (direction) fingerDirections[fingerBone(side, finger, i)] = direction;
+          previous = direction;
+        }
+      }
+    }
+
+    const upperArmRatio = {};
+    for (const side of ['left', 'right']) {
+      const upper = node(`${side}LowerArm`)?.position.length();
+      const lower = node(`${side}Hand`)?.position.length();
+      if (upper && lower) upperArmRatio[side] = upper / (upper + lower);
+    }
+    return { fingerDirections, upperArmRatio };
+  }
+
+  // Applique la pose de sortie (lissée, retargetée) au modèle VRM : rotations
+  // d'os humanoïdes, déplacement du bassin, puis expressions faciales.
+  applyPose(outputPose, hipsOffset = null) {
     if (!this.vrm?.humanoid) return;
 
     for (const [jointName, boneName] of Object.entries(JOINT_TO_VRM_BONE)) {
@@ -111,7 +134,17 @@ export class VrmController {
       if (!rotation) continue;
       const node = this.vrm.humanoid.getNormalizedBoneNode(boneName);
       if (!node) continue;
-      node.rotation.set(rotation.x, rotation.y, rotation.z);
+      node.quaternion.copy(this.toModelQuaternion(rotation));
+    }
+
+    const hips = this.vrm.humanoid.getNormalizedBoneNode('hips');
+    if (hips && this.hipsRestPosition && hipsOffset) {
+      const sign = this.isVrm0 ? -1 : 1;
+      hips.position.set(
+        this.hipsRestPosition.x + sign * hipsOffset.x,
+        this.hipsRestPosition.y + hipsOffset.y,
+        this.hipsRestPosition.z + sign * hipsOffset.z,
+      );
     }
 
     const expressionManager = this.vrm.expressionManager;
@@ -121,6 +154,18 @@ export class VrmController {
       if (!channel || channel.x === undefined) continue;
       expressionManager.setValue(expressionName, channel.x);
     }
+  }
+
+  // Rotation Euler XYZ (repère VRM 1.0) → quaternion dans le repère local du
+  // modèle chargé (conjugaison par une rotation de π autour de Y pour un
+  // VRM 0.x : x et z inversés).
+  toModelQuaternion(rotation) {
+    _quaternion.setFromEuler(_euler.set(rotation.x, rotation.y, rotation.z, 'XYZ'));
+    if (this.isVrm0) {
+      _quaternion.x = -_quaternion.x;
+      _quaternion.z = -_quaternion.z;
+    }
+    return _quaternion;
   }
 
   // Remet tous les os en pose de repos (T-pose normalisée) et les
