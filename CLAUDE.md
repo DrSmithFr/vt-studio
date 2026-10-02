@@ -19,7 +19,7 @@ Application web temps réel qui :
 - Rendu 3D : `three`.
 - Modèle VTuber : `@pixiv/three-vrm`.
 - Détection : `@mediapipe/tasks-vision` (WASM + délégation GPU).
-- Panneau de débogage : `lil-gui`.
+- Interface : composants maison sans dépendance (`ui/controls.js` : sections repliables, curseurs, interrupteurs, choix segmentés, valeurs en lecture seule), pas de lil-gui ni de framework UI.
 
 ## Structure des dossiers
 
@@ -48,7 +48,7 @@ src/
     LeftPanel.js           — position par défaut, détection, affichage, lissage
     RightPanel.js          — valeurs relatives, retargeting, butées, collision, modèle
     JointDock.js           — menu flottant bas : offsets + ressort par articulation
-    guiHelpers.js          — lil-gui intégré, angles affichés en degrés, badge « à venir »
+    controls.js            — bibliothèque de contrôles maison (remplace lil-gui), angles affichés en degrés, badge « à venir »
   main.js                  — point d'entrée : câblage store / interface / pipeline, boucle par frame
   style.css
 index.html
@@ -147,7 +147,7 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 ## Feuille de route de la reconstruction
 
 1. ✅ Récupération + premier commit ; boucle minimale (`main.js`), chargement VRM 0.x/1.0 (liste, fichier, glisser-déposer), WASM MediaPipe servi localement, serveur de dev HTTPS sur 0.0.0.0 (certificat auto-signé dans `.cert/`, non versionné, voir `vite.config.js`).
-2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`markPending`).
+2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`pendingBadge`).
 3. Détection : backend Web Worker (Holistic + Composite), ordonnanceur FPS par détecteur, lissage des landmarks, surimpression (caméra, brut, lissé).
 4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
 5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug. Corrige au passage les défauts du noyau récupéré : repère MediaPipe (Y vers le bas) vs three.js, rotations globales vs locales, NaN du lisseur sur les canaux de visage.

@@ -93,7 +93,7 @@ export function createDefaultSettings() {
 // Copie récursivement dans `target` les valeurs de `source` dont la clé
 // existe déjà dans `target` (et de même type). Les objets de `target` sont
 // conservés tels quels : les références partagées avec les sous-systèmes
-// (RetargetConfig, JointConstraints…) et avec les contrôles lil-gui restent
+// (RetargetConfig, JointConstraints…) et avec les contrôles des panneaux restent
 // valides après un import ou une réinitialisation.
 function mergeInto(target, source) {
   if (!source || typeof source !== 'object') return;
