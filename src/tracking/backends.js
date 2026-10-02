@@ -1,3 +1,5 @@
+import { RemoteSession } from './RemoteSession.js';
+
 // Backends d'exécution d'un détecteur. Interface commune :
 //   ready      : Promise résolue quand le détecteur accepte des frames
 //   busy       : true entre l'envoi d'une frame et la réception du résultat
@@ -57,23 +59,57 @@ export class WorkerBackend {
   }
 }
 
-// Exécution sur une machine distante (serveur Python + MediaPipe, WebRTC) :
-// prévue en phase 7. En attendant, le backend signale qu'il n'est pas
-// disponible plutôt que de faire échouer toute la détection.
+// Exécution sur une machine distante (server/vt_server.py) : la vidéo part
+// en continu par WebRTC (RemoteSession, partagée entre détecteurs distants),
+// le serveur cadence lui-même chaque détecteur au FPS demandé. `streaming`
+// indique à l'ordonnanceur de ne pas lui envoyer de frames.
 export class RemoteBackend {
-  constructor(kind) {
+  constructor(kind, options, { id, url, fps, getStream }) {
     this.kind = kind;
+    this.id = id;
     this.busy = false;
+    this.streaming = true;
     this.delegate = 'distant';
     this.onResult = null;
     this.onError = null;
-    this.ready = Promise.reject(new Error('exécution distante pas encore disponible (phase 7)'));
+
+    if (!url) {
+      this.ready = Promise.reject(new Error('adresse du serveur distant non renseignée'));
+      this.ready.catch(() => {});
+      return;
+    }
+    this.session = RemoteSession.acquire(url, getStream);
+    this.ready = new Promise((resolve, reject) => {
+      this.session.register(id, { kind, fps, options }, (message) => {
+        switch (message.type) {
+          case 'ready':
+            this.delegate = message.delegate;
+            resolve();
+            break;
+          case 'result':
+            // Horodatage à la réception : les frames WebRTC ne portent pas
+            // l'horloge de la page. Inclut donc la latence réseau.
+            this.onResult?.({ timestamp: performance.now(), parts: message.parts, inferenceMs: message.inferenceMs });
+            break;
+          case 'error':
+            reject(new Error(message.message));
+            this.onError?.(message.message);
+            break;
+        }
+      });
+    });
     this.ready.catch(() => {});
+  }
+
+  setFps(fps) {
+    this.session?.setFps(this.id, fps);
   }
 
   send(frame) {
     frame.close();
   }
 
-  dispose() {}
+  dispose() {
+    this.session?.unregister(this.id);
+  }
 }

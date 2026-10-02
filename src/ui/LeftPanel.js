@@ -71,8 +71,11 @@ export class LeftPanel {
       detection.select(d, 'poseModel', { Lite: 'lite', Full: 'full', Heavy: 'heavy' }, { label: 'Modèle corps' }),
     ];
     detection
-      .text(d, 'remoteUrl', { label: 'Serveur distant', placeholder: 'wss://hôte:port' })
-      .tooltip('Exécution distante : phase 7 de la reconstruction.');
+      .text(d, 'remoteUrl', { label: 'Serveur distant', placeholder: 'https://hôte:8765' })
+      .tooltip(
+        'Adresse du serveur de détection (server/vt_server.py), en HTTPS. ' +
+          "Ouvrir l'adresse une fois dans le navigateur pour accepter son certificat.",
+      );
 
     // Statistiques temps réel par détecteur (voir setStats).
     const stats = detection.section('Statistiques');

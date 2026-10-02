@@ -39,7 +39,10 @@ src/
     TrackerManager.js    — webcam + ordonnanceur : détecteurs Holistic ou Composite, FPS par détecteur, dernière détection par partie, statistiques
     detectors.js          — création des tâches MediaPipe et normalisation des résultats au format commun (côtés anatomiques)
     detection.worker.js   — Web Worker (module ES) exécutant un détecteur, GPU avec repli CPU
-    backends.js           — WorkerBackend ; RemoteBackend (bouchon jusqu'à la phase 7)
+    backends.js           — WorkerBackend (frames envoyées par l'ordonnanceur) ; RemoteBackend (flux continu, cadencé côté serveur)
+    RemoteSession.js      — connexion WebRTC au serveur distant, partagée par les détecteurs distants d'une même adresse
+server/
+  vt_server.py            — serveur de détection distant (Python, aiortc + MediaPipe), voir server/README.md
   core/DetectionSmoother.js — lissage exponentiel des landmarks et blendshapes, par détecteur, une fois par nouveau résultat
   vrm/
     VrmController.js     — chargement VRM, transform du modèle, application des rotations d'os et des expressions
@@ -173,7 +176,7 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 5. ✅ KeyPose : reconstruite depuis les seules valeurs relatives (tronc, tête, bras, poignets avec twist, jambes, doigts, déplacement du bassin), squelette dupliqué affiché (couche KeyPose), conversion VRM 0.x. Aller-retour extraction → reconstruction vérifié numériquement (bras, coude, genou, index, orientation de la tête, direct et miroir).
    Déjà corrigé en avance (défauts du noyau récupéré) : conversion du repère MediaPipe (y bas, z s'éloignant) vers celui de l'avatar (`toAvatarSpace` : (x, -y, -z), x inversé en miroir) ; directions de repos de la T-pose VRM normalisée (bras ±X, colonne +Y, jambes -Y) ; rotations **locales** calculées os par os dans le repère du parent (`swingRotation` dans `utils/MathUtils.js`) ; miroir de l'avatar au niveau des landmarks (côtés échangés + x inversé, réglage `general.mirrorAvatar`) ; jambes figées selon le cadrage ; angles déroulés dans `Smoother` (plus de saut à ±π) ; NaN des canaux de visage. Vérifié numériquement (T-pose, bras le long du corps, bras vers la caméra, coude plié, direct et miroir).
 6. ✅ Suivi par ressort amorti (`SpringFollower`, remplace le lissage exponentiel des angles), menu du bas actif (raideur / amortissement, ζ et temps de réponse affichés, « Appliquer au groupe »). Migration des réglages v1 → v2 (anciennes valeurs provisoires du ressort abandonnées).
-7. Backend remote : serveur Python (MediaPipe + WebRTC/aiortc), DataChannel, mode Composite mixte.
+7. ✅ Backend distant : `server/vt_server.py` (aiohttp pour la signalisation `POST /offer`, aiortc pour WebRTC, MediaPipe Tasks Python), une connexion WebRTC par adresse partagée par les détecteurs distants (`RemoteSession`), DataChannel `control` fiable (configuration : détecteurs, FPS, modèle) et `detections` non fiable / non ordonné (résultats au format commun) ; dernière frame seulement, un thread par détecteur à son FPS. Composite mixte Worker / distant. Le serveur doit être en HTTPS (page en HTTPS → contenu mixte bloqué sinon) et son certificat accepté une fois dans le navigateur. Non testé de bout en bout ici (dépendances Python absentes, Python 3.14 trop récent pour mediapipe) ; normalisation vérifiée avec des modules bouchons.
 8. Validation en conditions réelles, valeurs par défaut, documentation.
 
 Extensions non prioritaires : clavicule, pieds (landmarks 29-32), twist du poignet.

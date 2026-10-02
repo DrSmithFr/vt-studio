@@ -1,0 +1,6 @@
+# Serveur de détection distant de VTuber Studio (Python 3.9 à 3.12, selon
+# les versions prises en charge par mediapipe).
+mediapipe>=0.10.14
+aiortc>=1.9
+aiohttp>=3.9
+numpy

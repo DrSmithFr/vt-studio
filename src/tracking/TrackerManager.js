@@ -103,8 +103,14 @@ export class TrackerManager {
             fps: detection.fps[kind],
           }));
     this.fps = Object.fromEntries(specs.map((s) => [s.id, s.fps]));
+    // Les backends distants sont cadencés côté serveur : FPS transmis.
+    for (const detector of this.detectors) detector.backend.setFps?.(this.fps[detector.id]);
 
-    const signature = JSON.stringify([specs.map(({ id, backend }) => [id, backend]), detection.poseModel]);
+    const signature = JSON.stringify([
+      specs.map(({ id, backend }) => [id, backend]),
+      detection.poseModel,
+      specs.some((s) => s.backend === 'remote') ? detection.remoteUrl : null,
+    ]);
     if (signature === this.signature) return;
     this.signature = signature;
 
@@ -113,9 +119,17 @@ export class TrackerManager {
     this.detectors = specs.map((spec) => this.#createDetector(spec, detection));
   }
 
-  #createDetector({ id, kind, backend: backendType }, detection) {
+  #createDetector({ id, kind, backend: backendType, fps }, detection) {
     const options = { poseModel: detection.poseModel };
-    const backend = backendType === 'remote' ? new RemoteBackend(kind) : new WorkerBackend(kind, options);
+    const backend =
+      backendType === 'remote'
+        ? new RemoteBackend(kind, options, {
+            id,
+            url: detection.remoteUrl,
+            fps,
+            getStream: () => this.video.srcObject,
+          })
+        : new WorkerBackend(kind, options);
     const detector = {
       id,
       kind,
@@ -155,7 +169,7 @@ export class TrackerManager {
   tick(nowMs) {
     if (this.video.readyState < 2) return;
     for (const detector of this.detectors) {
-      if (detector.status !== 'ready' || detector.backend.busy) continue;
+      if (detector.status !== 'ready' || detector.backend.busy || detector.backend.streaming) continue;
       const intervalMs = 1000 / Math.max(1, this.fps[detector.id] ?? 30);
       // Petite tolérance : sans elle, un FPS réglé égal à celui de l'écran
       // sauterait une frame sur deux à cause de la gigue de requestAnimationFrame.
