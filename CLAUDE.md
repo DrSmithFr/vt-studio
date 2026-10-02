@@ -27,7 +27,8 @@ Application web temps réel qui :
 src/
   core/
     JointSchema.js       — liste des articulations/canaux, paires miroir, groupes de réglage fusionnés
-    Smoother.js           — lissage exponentiel indépendant par articulation et par axe
+    SpringFollower.js     — suivi de la KeyPose par le modèle : ressort amorti par articulation (quaternions), déplacement du bassin
+    HandRestTracker.js    — repos naturel des doigts appris en continu (moyenne glissante 60 s, mains au repos)
     FeatureExtractor.js    — détection lissée → valeurs relatives (tronc, tête, bras, mains, poignets, jambes, doigts) + expressions ; toute la géométrie des landmarks
     KeyPoseBuilder.js      — valeurs relatives → KeyPose (rotations locales + déplacement du bassin), poses de repos corps / mains
     TwoBoneIK.js            — IK analytique à deux os (loi des cosinus) pour bras et jambes
@@ -106,9 +107,9 @@ Avant de résoudre l'IK d'un bras, `pushOutOfTorso(target, shoulderMid, hipMid, 
 
 `JointConstraints.apply(pose)` referme chaque canal dans une plage `[min, max]` par axe, réglable par articulation (`setLimit(nom, axe, min, max)`). Sert de filet de sécurité après le retargeting : même si l'IK stabilise déjà l'essentiel, ça évite qu'un coude ou un genou affiche une hyperextension visuellement choquante en cas de détection ponctuellement aberrante. Limites par défaut volontairement généreuses, pas une biomécanique exacte.
 
-### Lissage (`core/Smoother.js`)
+### Suivi par ressort (`core/SpringFollower.js`)
 
-Une moyenne mobile exponentielle indépendante par axe et par articulation. Le délai (constante de temps en millisecondes) se règle canal par canal via `SkeletonSmoother.setDelay(nomCanal, delayMs)` - c'est ce réglage qui doit être exposé dans le panneau de débogage.
+Chaque os du modèle suit la cible (KeyPose après retargeting, butées et offsets) par un ressort amorti : l'écart de rotation (vecteur axe × angle, plus court chemin) donne une accélération `k · écart − c · vitesse`, intégrée en Euler semi-implicite par sous-pas ≤ 1/240 s (stable même à forte raideur). Taux d'amortissement ζ = c / (2√k). Réglages par articulation dans `settings.joints` (menu du bas, avec affichage de ζ, du temps de réponse à 90 % et du dépassement) ; par défaut ζ ≈ 0,95 : corps 400 / 38 (~180 ms), doigts 600 / 46, bassin 150 / 24 (règle aussi le ressort vectoriel du déplacement du bassin). Raideur 0 = cible appliquée directement. Le lissage en amont se fait sur les landmarks (`DetectionSmoother`), plus sur les angles.
 
 ### Retargeting (`core/RetargetConfig.js`)
 
@@ -171,7 +172,7 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 4. ✅ Calibration (corps / mains, compte à rebours) + poses de repos + extraction des valeurs relatives (panneau droit).
 5. ✅ KeyPose : reconstruite depuis les seules valeurs relatives (tronc, tête, bras, poignets avec twist, jambes, doigts, déplacement du bassin), squelette dupliqué affiché (couche KeyPose), conversion VRM 0.x. Aller-retour extraction → reconstruction vérifié numériquement (bras, coude, genou, index, orientation de la tête, direct et miroir).
    Déjà corrigé en avance (défauts du noyau récupéré) : conversion du repère MediaPipe (y bas, z s'éloignant) vers celui de l'avatar (`toAvatarSpace` : (x, -y, -z), x inversé en miroir) ; directions de repos de la T-pose VRM normalisée (bras ±X, colonne +Y, jambes -Y) ; rotations **locales** calculées os par os dans le repère du parent (`swingRotation` dans `utils/MathUtils.js`) ; miroir de l'avatar au niveau des landmarks (côtés échangés + x inversé, réglage `general.mirrorAvatar`) ; jambes figées selon le cadrage ; angles déroulés dans `Smoother` (plus de saut à ±π) ; NaN des canaux de visage. Vérifié numériquement (T-pose, bras le long du corps, bras vers la caméra, coude plié, direct et miroir).
-6. Suivi par ressort amorti + menu du bas (offsets, raideur/amortissement) + retargeting et butées dans le panneau droit.
+6. ✅ Suivi par ressort amorti (`SpringFollower`, remplace le lissage exponentiel des angles), menu du bas actif (raideur / amortissement, ζ et temps de réponse affichés, « Appliquer au groupe »). Migration des réglages v1 → v2 (anciennes valeurs provisoires du ressort abandonnées).
 7. Backend remote : serveur Python (MediaPipe + WebRTC/aiortc), DataChannel, mode Composite mixte.
 8. Validation en conditions réelles, valeurs par défaut, documentation.
 

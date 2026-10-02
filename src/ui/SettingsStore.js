@@ -1,5 +1,11 @@
-import { ROTATION_JOINTS } from '../core/JointSchema.js';
+import { FINGER_JOINTS, ROTATION_JOINTS } from '../core/JointSchema.js';
 import { CALIBRATED_KEYS, fingerFeatureKey } from '../core/FeatureSchema.js';
+
+function defaultSpring(joint) {
+  if (joint === 'hips') return { stiffness: 150, damping: 24 };
+  if (FINGER_JOINTS.includes(joint)) return { stiffness: 600, damping: 46 };
+  return { stiffness: 400, damping: 38 };
+}
 
 // Références de calibration par défaut : zéro partout, sauf le pouce dont la
 // position naturelle main ouverte est écartée et légèrement fléchie par
@@ -27,7 +33,7 @@ function defaultCalibration() {
 }
 
 const STORAGE_KEY = 'vt-studio.settings';
-const SETTINGS_VERSION = 1;
+const SETTINGS_VERSION = 2;
 const SAVE_DEBOUNCE_MS = 300;
 
 // Réglages par défaut de toute l'application. C'est aussi le schéma : à
@@ -124,14 +130,30 @@ export function createDefaultSettings() {
     },
 
     // Menu flottant du bas : par articulation, offset (radians) et ressort
-    // de retour à la KeyPose.
+    // de retour à la KeyPose (voir SpringFollower : taux d'amortissement
+    // c / (2√k) ≈ 0,95, réponse à 90 % en ~180 ms pour le corps, plus
+    // rapide pour les doigts). « hips » règle aussi le déplacement du
+    // bassin, plus doux.
     joints: Object.fromEntries(
-      ROTATION_JOINTS.map((name) => [
-        name,
-        { offset: { x: 0, y: 0, z: 0 }, stiffness: 120, damping: 18 },
-      ]),
+      ROTATION_JOINTS.map((name) => [name, { offset: { x: 0, y: 0, z: 0 }, ...defaultSpring(name) }]),
     ),
   };
+}
+
+// Mise à niveau d'un fichier de réglages d'une version antérieure, avant
+// fusion. v1 → v2 : la raideur / l'amortissement des articulations étaient
+// enregistrés sans être utilisés (valeurs provisoires), on les abandonne au
+// profit des nouvelles valeurs par défaut.
+function migrate(file) {
+  const version = file?.version ?? 1;
+  const settings = structuredClone(file?.settings ?? file ?? {});
+  if (version < 2 && settings.joints) {
+    for (const joint of Object.values(settings.joints)) {
+      delete joint.stiffness;
+      delete joint.damping;
+    }
+  }
+  return settings;
 }
 
 // Copie récursivement dans `target` les valeurs de `source` dont la clé
@@ -169,7 +191,7 @@ export class SettingsStore {
   load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) mergeInto(this.data, JSON.parse(raw).settings);
+      if (raw) mergeInto(this.data, migrate(JSON.parse(raw)));
     } catch (error) {
       console.warn('Réglages locaux illisibles, valeurs par défaut utilisées.', error);
     }
@@ -207,7 +229,7 @@ export class SettingsStore {
 
   import(json) {
     const parsed = typeof json === 'string' ? JSON.parse(json) : json;
-    mergeInto(this.data, parsed.settings ?? parsed);
+    mergeInto(this.data, migrate(parsed));
     this.commit();
   }
 

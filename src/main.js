@@ -1,10 +1,10 @@
 import './style.css';
-import { ALL_CHANNELS, AXES, ROTATION_JOINTS } from './core/JointSchema.js';
+import { AXES, ROTATION_JOINTS } from './core/JointSchema.js';
 import { CALIBRATED_KEYS } from './core/FeatureSchema.js';
 import { FeatureExtractor } from './core/FeatureExtractor.js';
 import { KeyPoseBuilder } from './core/KeyPoseBuilder.js';
 import { HandRestTracker } from './core/HandRestTracker.js';
-import { SkeletonSmoother } from './core/Smoother.js';
+import { SpringFollower } from './core/SpringFollower.js';
 import { DetectionSmoother } from './core/DetectionSmoother.js';
 import { RetargetConfig, applyRetargeting } from './core/RetargetConfig.js';
 import { JointConstraints } from './core/JointConstraints.js';
@@ -46,10 +46,9 @@ const detectionSmoother = new DetectionSmoother();
 const featureExtractor = new FeatureExtractor();
 const keyPoseBuilder = new KeyPoseBuilder();
 const keyPoseSkeleton = new KeyPoseSkeleton(sceneManager.scene);
-// Suivi de la KeyPose par le modèle (lissage par articulation, remplacé par
-// un ressort amorti en phase 6). Le déplacement du bassin est un canal
-// supplémentaire, non angulaire.
-const skeletonSmoother = new SkeletonSmoother([...ALL_CHANNELS, 'hipsOffset'], 80, ROTATION_JOINTS);
+// Suivi de la KeyPose par le modèle : ressort amorti par articulation
+// (réglages du menu des articulations).
+const springFollower = new SpringFollower(ROTATION_JOINTS);
 const retargetConfig = new RetargetConfig();
 const jointConstraints = new JointConstraints();
 
@@ -100,7 +99,7 @@ function applySettings() {
   if (wasActive && !trackerManager.active) {
     vrmController.resetPose();
     keyPoseSkeleton.update({}, null, false);
-    skeletonSmoother.reset();
+    springFollower.reset();
     detectionSmoother.reset();
     overlayRenderer.clear();
   }
@@ -495,8 +494,8 @@ function frame() {
     target.hipsOffset = keyPose.hipsOffset;
     keyPoseSkeleton.update(target, target.hipsOffset, settings.layers.keyPose);
 
-    // Le modèle suit la cible.
-    const output = skeletonSmoother.update(target, dtMs);
+    // Le modèle suit la cible, par ressort amorti.
+    const output = springFollower.update(target, settings.joints, dtMs);
     vrmController.applyPose(output, output.hipsOffset);
 
     overlayRenderer.draw({

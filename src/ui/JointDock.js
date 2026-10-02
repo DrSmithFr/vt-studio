@@ -1,5 +1,38 @@
 import { BODY_JOINTS, FINGER_JOINTS, JOINT_LABELS, ROTATION_JOINTS } from '../core/JointSchema.js';
-import { ControlPanel, pendingBadge } from './controls.js';
+import { ControlPanel } from './controls.js';
+
+// Caractéristiques d'un ressort (raideur k, amortissement c) pour
+// l'affichage : taux d'amortissement ζ = c / (2√k), temps pour atteindre
+// 90 % d'un échelon et dépassement, par simulation 1D (même intégration que
+// SpringFollower).
+function describeSpring(k, c) {
+  if (k <= 0) return 'immédiat (pas de ressort)';
+  const zeta = c / (2 * Math.sqrt(k));
+  const h = 1 / 1000;
+  let x = 0;
+  let v = 0;
+  let t90 = null;
+  let peak = 0;
+  for (let i = 1; i <= 3000; i++) {
+    v = (v + k * (1 - x) * h) / (1 + c * h);
+    x += v * h;
+    peak = Math.max(peak, x);
+    if (t90 === null && x >= 0.9) t90 = i;
+  }
+  const response = t90 === null ? '> 3 s' : `${t90} ms`;
+  const overshoot = peak > 1.005 ? ` · rebond ${((peak - 1) * 100).toFixed(0)} %` : '';
+  return `ζ ${zeta.toFixed(2)} · 90 % en ${response}${overshoot}`;
+}
+
+// Groupe d'une articulation pour « Appliquer au groupe » : doigts de la même
+// main, ou corps.
+function jointGroup(joint) {
+  if (FINGER_JOINTS.includes(joint)) {
+    const side = joint.startsWith('left') ? 'left' : 'right';
+    return FINGER_JOINTS.filter((j) => j.startsWith(side));
+  }
+  return BODY_JOINTS;
+}
 
 // Menu flottant en bas de la vue : pour l'articulation choisie, offsets
 // (ajoutés à la KeyPose) et paramètres du ressort qui ramène l'os du modèle
@@ -57,7 +90,12 @@ export class JointDock {
   #build() {
     this.body.replaceChildren();
     const joint = this.store.data.joints[this.selected];
-    this.panel = new ControlPanel(this.body, { onChange: () => this.store.commit() });
+    this.panel = new ControlPanel(this.body, {
+      onChange: () => {
+        this.#describe(joint);
+        this.store.commit();
+      },
+    });
 
     // Deux colonnes : offsets à gauche, ressort à droite.
     const offsets = this.panel.section('Offsets');
@@ -65,9 +103,29 @@ export class JointDock {
     offsets.angle(joint.offset, 'y', { label: 'Y' });
     offsets.angle(joint.offset, 'z', { label: 'Z' });
 
-    const spring = this.panel.section('Retour à la KeyPose', { badge: pendingBadge(6) });
-    spring.slider(joint, 'stiffness', { label: 'Raideur', min: 0, max: 500, step: 1 });
-    spring.slider(joint, 'damping', { label: 'Amortissement', min: 0, max: 60, step: 0.5 });
+    const spring = this.panel.section('Retour à la KeyPose');
+    spring.slider(joint, 'stiffness', { label: 'Raideur', min: 0, max: 1000, step: 5 });
+    spring.slider(joint, 'damping', { label: 'Amortissement', min: 0, max: 100, step: 0.5 });
+    this.springReadout = spring.readout('Réponse');
+    const group = FINGER_JOINTS.includes(this.selected) ? 'doigts de cette main' : 'corps';
+    spring
+      .button(`Appliquer au groupe (${group})`, () => this.#applyToGroup(joint))
+      .tooltip("Copie la raideur et l'amortissement sur toutes les articulations du groupe");
+    this.#describe(joint);
+  }
+
+  #describe(joint) {
+    this.springReadout.set(describeSpring(joint.stiffness, joint.damping));
+  }
+
+  #applyToGroup(joint) {
+    for (const name of jointGroup(this.selected)) {
+      // Le bassin garde son propre réglage (il règle aussi son déplacement).
+      if (name === 'hips' && this.selected !== 'hips') continue;
+      this.store.data.joints[name].stiffness = joint.stiffness;
+      this.store.data.joints[name].damping = joint.damping;
+    }
+    this.store.commit();
   }
 
   #resetSelected() {
@@ -82,5 +140,6 @@ export class JointDock {
 
   refresh() {
     this.panel.refresh();
+    this.#describe(this.store.data.joints[this.selected]);
   }
 }
