@@ -41,8 +41,15 @@ src/
     SceneManager.js       — scène three.js (caméra, lumières, renderer)
   utils/
     MathUtils.js          — dérivation d'une rotation Euler à partir d'une paire de landmarks 3D
-  ui/                      — panneau de débogage (à implémenter, voir "Reste à faire")
-  main.js                  — point d'entrée, boucle de rendu (encore le gabarit Vite par défaut)
+  core/FeatureSchema.js    — liste des valeurs relatives affichées dans le panneau droit
+  ui/
+    SettingsStore.js      — réglages par défaut (schéma), persistance, import/export
+    MenuBar.js             — barre de menu Fichier / Views / Settings
+    LeftPanel.js           — position par défaut, détection, affichage, lissage
+    RightPanel.js          — valeurs relatives, retargeting, butées, collision, modèle
+    JointDock.js           — menu flottant bas : offsets + ressort par articulation
+    guiHelpers.js          — lil-gui intégré, angles affichés en degrés, badge « à venir »
+  main.js                  — point d'entrée : câblage store / interface / pipeline, boucle par frame
   style.css
 index.html
 ```
@@ -140,7 +147,7 @@ Réglages persistés (localStorage) et exportables en JSON depuis le menu Fichie
 ## Feuille de route de la reconstruction
 
 1. ✅ Récupération + premier commit ; boucle minimale (`main.js`), chargement VRM 0.x/1.0 (liste, fichier, glisser-déposer), WASM MediaPipe servi localement, serveur de dev HTTPS sur 0.0.0.0 (certificat auto-signé dans `.cert/`, non versionné, voir `vite.config.js`).
-2. Coquille d'interface : barre de menu, panneaux gauche/droit, menu flottant bas, couches Views, persistance des réglages.
+2. ✅ Coquille d'interface : barre de menu (`ui/MenuBar.js`), panneaux gauche/droit (`ui/LeftPanel.js`, `ui/RightPanel.js`), menu flottant bas (`ui/JointDock.js`), couches Views, réglages centralisés et persistés (`ui/SettingsStore.js` : localStorage + import/export JSON ; les sous-systèmes partagent les objets du store, `mergeInto` préserve les références). Les sections pas encore branchées portent un badge « à venir » (`markPending`).
 3. Détection : backend Web Worker (Holistic + Composite), ordonnanceur FPS par détecteur, lissage des landmarks, surimpression (caméra, brut, lissé).
 4. Calibration + poses de repos + extraction des valeurs relatives (panneau droit).
 5. KeyPose : squelette dupliqué reconstruit depuis les valeurs relatives (IK, collision, doigts), couche de debug. Corrige au passage les défauts du noyau récupéré : repère MediaPipe (Y vers le bas) vs three.js, rotations globales vs locales, NaN du lisseur sur les canaux de visage.

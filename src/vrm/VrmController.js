@@ -87,6 +87,10 @@ export class VrmController {
     return this.vrm?.meta?.metaVersion ?? null;
   }
 
+  setVisible(visible) {
+    if (this.vrm) this.vrm.scene.visible = visible;
+  }
+
   // Position/rotation/échelle du modèle dans la scène (réglable dans le
   // panneau de débogage : le modèle n'est pas forcément centré à l'origine).
   setTransform({ position, rotationY, scale }) {

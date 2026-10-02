@@ -5,7 +5,7 @@
 // une paire gauche/droite : les réglages d'inversion et d'amplification sont
 // fusionnés pour la paire (un seul jeu de curseurs contrôle les deux côtés),
 // conformément à la demande. Le signe appliqué à chaque membre de la paire
-// est géré par MirrorGroups.js.
+// est géré par RetargetConfig.js.
 
 export const AXES = ['x', 'y', 'z'];
 
@@ -78,4 +78,41 @@ export function isLeftJoint(jointName) {
 
 export function isRightJoint(jointName) {
   return jointName.startsWith('right');
+}
+
+// Libellés affichés dans l'interface (panneaux, menu des articulations).
+export const JOINT_LABELS = {
+  hips: 'Bassin',
+  spine: 'Colonne',
+  chest: 'Poitrine',
+  neck: 'Cou',
+  head: 'Tête',
+  leftShoulder: 'Clavicule G',
+  rightShoulder: 'Clavicule D',
+  leftUpperArm: 'Bras G',
+  rightUpperArm: 'Bras D',
+  leftLowerArm: 'Avant-bras G',
+  rightLowerArm: 'Avant-bras D',
+  leftHand: 'Main G',
+  rightHand: 'Main D',
+  leftUpperLeg: 'Cuisse G',
+  rightUpperLeg: 'Cuisse D',
+  leftLowerLeg: 'Jambe G',
+  rightLowerLeg: 'Jambe D',
+  leftFoot: 'Pied G',
+  rightFoot: 'Pied D',
+  leftEyeBlink: 'Clignement G',
+  rightEyeBlink: 'Clignement D',
+  leftEyebrowRaise: 'Sourcil G',
+  rightEyebrowRaise: 'Sourcil D',
+  mouthOpen: 'Bouche ouverte',
+  mouthWide: 'Bouche étirée',
+};
+
+// Libellé d'un groupe de réglage (voir mirrorGroupKey) : une paire miroir
+// est affichée sous un nom commun, sans le suffixe de côté.
+export function mirrorGroupLabel(groupKey) {
+  const [first, second] = groupKey.split('/');
+  if (!second) return JOINT_LABELS[first] ?? first;
+  return `${(JOINT_LABELS[first] ?? first).replace(/ [GD]$/, '')} (G/D)`;
 }

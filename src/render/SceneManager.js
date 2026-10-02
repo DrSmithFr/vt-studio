@@ -4,7 +4,8 @@ export class SceneManager {
   constructor(canvas) {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1a20);
+    this.backgroundColor = new THREE.Color(0x1a1a20);
+    this.scene.background = this.backgroundColor;
 
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
     this.camera.position.set(0, 1.3, 3);
@@ -18,12 +19,21 @@ export class SceneManager {
     this.scene.add(key);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
+    // La taille du canvas dépend de la grille (panneaux affichés ou non),
+    // pas seulement de la fenêtre.
     this.#resize();
-    window.addEventListener('resize', () => this.#resize());
+    new ResizeObserver(() => this.#resize()).observe(canvas);
+  }
+
+  // Fond opaque, ou transparent pour laisser voir la caméra derrière le
+  // modèle (couche « Caméra »).
+  setBackgroundVisible(visible) {
+    this.scene.background = visible ? this.backgroundColor : null;
   }
 
   #resize() {
     const { clientWidth, clientHeight } = this.canvas;
+    if (clientWidth === 0 || clientHeight === 0) return;
     this.camera.aspect = clientWidth / clientHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(clientWidth, clientHeight, false);

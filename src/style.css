@@ -1,90 +1,307 @@
-html, body {
+:root {
+  --bg: #0e0e12;
+  --surface: #17171d;
+  --surface-raised: #1f1f27;
+  --border: #2a2a34;
+  --border-strong: #3a3a48;
+  --text: #e8e8ec;
+  --text-muted: #9a9aa5;
+  --accent: #7a7aff;
+  --menubar-height: 28px;
+  --statusbar-height: 22px;
+  --panel-width: 300px;
+}
+
+html,
+body {
   margin: 0;
   height: 100%;
-  background: #0e0e12;
-  color: #e8e8ec;
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, sans-serif;
+  font-size: 12px;
   overflow: hidden;
 }
 
+/* --- Grille principale ---------------------------------------------------- */
+
 #app {
-  position: relative;
+  display: grid;
+  grid-template-rows: var(--menubar-height) minmax(0, 1fr) var(--statusbar-height);
+  grid-template-columns: var(--panel-width) minmax(0, 1fr) var(--panel-width);
+  grid-template-areas:
+    'menu menu menu'
+    'left view right'
+    'status status status';
   width: 100vw;
   height: 100vh;
 }
 
-#webcam-source {
+#app.hide-left {
+  grid-template-columns: 0 minmax(0, 1fr) var(--panel-width);
+}
+
+#app.hide-right {
+  grid-template-columns: var(--panel-width) minmax(0, 1fr) 0;
+}
+
+#app.hide-left.hide-right {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+#app.hide-left #left-panel,
+#app.hide-right #right-panel,
+#app.hide-joint-dock #joint-dock {
   display: none;
 }
 
-#viewport-stack {
+/* --- Barre de menu -------------------------------------------------------- */
+
+.menubar {
+  grid-area: menu;
   position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  padding: 0 4px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.menubar-item {
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.menubar-item:hover,
+.menubar-item.open {
+  background: var(--surface-raised);
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: var(--menubar-height);
+}
+
+.menu-list {
+  min-width: 220px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.menu-entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px 5px 6px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.menu-entry:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.menu-entry.disabled {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.menu-entry.disabled:hover {
+  background: none;
+  color: var(--text-muted);
+}
+
+.menu-check {
+  text-align: center;
+}
+
+.menu-hint {
+  color: var(--text-muted);
+  padding-left: 16px;
+}
+
+.menu-entry:hover .menu-hint {
+  color: inherit;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.menu-entry > .menu-list {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  display: none;
+  color: var(--text);
+}
+
+.menu-entry.has-submenu:hover > .menu-list {
+  display: block;
+}
+
+/* --- Panneaux latéraux ---------------------------------------------------- */
+
+.side-panel {
+  overflow-y: auto;
+  background: var(--surface);
+  scrollbar-width: thin;
+}
+
+#left-panel {
+  grid-area: left;
+  border-right: 1px solid var(--border);
+}
+
+#right-panel {
+  grid-area: right;
+  border-left: 1px solid var(--border);
+}
+
+.embedded-gui.lil-gui.root {
+  width: 100%;
+  --background-color: var(--surface);
+  --title-background-color: var(--surface-raised);
+  --widget-color: #2a2a35;
+  --hover-color: #34343f;
+  --focus-color: #3d3d4a;
+  --number-color: #8fb4ff;
+  --string-color: #b7e08a;
+  --name-width: 48%;
+}
+
+.pending-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #4a3d1a;
+  color: #f0c86a;
+  font-size: 10px;
+  font-weight: normal;
+}
+
+/* --- Vue centrale --------------------------------------------------------- */
+
+#viewport {
+  grid-area: view;
+  position: relative;
+  overflow: hidden;
+  background: #1a1a20;
+}
+
+#viewport-stack {
+  position: absolute;
+  inset: 0;
+}
+
+#webcam-source,
+#scene-canvas,
+#overlay-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
 }
 
-#overlay-canvas,
+#webcam-source {
+  z-index: 0;
+  object-fit: contain;
+}
+
+#app.mirror-camera #webcam-source {
+  transform: scaleX(-1);
+}
+
+#app.hide-camera #webcam-source {
+  visibility: hidden;
+}
+
 #scene-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  z-index: 1;
 }
 
 #overlay-canvas {
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
 }
 
-#scene-canvas {
-  z-index: 0;
+/* --- Menu flottant des articulations -------------------------------------- */
+
+.joint-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 3;
+  width: min(420px, calc(100% - 24px));
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
 }
 
-#status-bar {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  z-index: 2;
-  font-size: 12px;
-  color: #9a9aa5;
-  pointer-events: none;
-}
-
-#toolbar {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 2;
+.joint-dock-header {
   display: flex;
-  gap: 6px;
-  font-size: 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
 }
 
-#toolbar select,
-#toolbar .button {
-  padding: 4px 8px;
-  border: 1px solid #33333d;
+.joint-dock-header span {
+  color: var(--text-muted);
+}
+
+.joint-dock-header select {
+  flex: 1;
+}
+
+.joint-dock-header select,
+.joint-dock-header button {
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #1c1c24;
+  background: var(--surface);
   color: inherit;
   font: inherit;
-  cursor: pointer;
 }
 
-#toolbar .button:hover,
-#toolbar select:hover {
-  border-color: #55556a;
+.joint-dock-header button:hover {
+  border-color: var(--accent);
 }
+
+/* Titre interne du lil-gui redondant avec l'en-tête du menu. */
+.joint-dock-body .embedded-gui > .lil-title {
+  display: none;
+}
+
+/* --- Glisser-déposer ------------------------------------------------------ */
 
 #drop-hint {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 5;
   display: none;
   align-items: center;
   justify-content: center;
-  border: 2px dashed #7a7aff;
+  border: 2px dashed var(--accent);
   background: rgba(14, 14, 18, 0.7);
   font-size: 18px;
   pointer-events: none;
@@ -92,4 +309,19 @@ html, body {
 
 #app.dragging #drop-hint {
   display: flex;
+}
+
+/* --- Barre de statut ------------------------------------------------------ */
+
+#status-bar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
 }

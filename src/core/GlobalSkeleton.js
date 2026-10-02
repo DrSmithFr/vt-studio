@@ -1,6 +1,6 @@
 import { directionToEuler, clamp01, distance3D } from '../utils/MathUtils.js';
 import { solveTwoBoneIK } from './TwoBoneIK.js';
-import { pushOutOfTorso } from './CollisionAvoidance.js';
+import { pushOutOfTorso, DEFAULT_TORSO_RADIUS } from './CollisionAvoidance.js';
 
 // Indices des landmarks de pose utilisés (schéma à 33 points de
 // PoseLandmarker / BlazePose). Voir la documentation MediaPipe Tasks Vision
@@ -41,6 +41,9 @@ const REST_FORWARD = { x: 0, y: 0, z: -1 };
 // retargeting (RetargetConfig).
 export class GlobalSkeletonBuilder {
   constructor() {
+    // Rayon de la capsule du torse (m), réglable dans le panneau droit.
+    this.torsoRadius = DEFAULT_TORSO_RADIUS;
+
     // Longueurs de segment calibrées progressivement (moyenne mobile lente)
     // à partir des worldLandmarks, en mètres. Servent de longueurs fixes à
     // l'IK à deux os : ça évite qu'une distance de segment bruitée une
@@ -177,7 +180,7 @@ export class GlobalSkeletonBuilder {
   // quand fourni, repousse d'abord la cible hors du buste (bras uniquement).
   #solveLimb({ pose, upperJoint, lowerJoint, root, hint, target, restDirection, avoidTorso }) {
     const resolvedTarget = avoidTorso
-      ? pushOutOfTorso(target, avoidTorso.shoulderMid, avoidTorso.hipMid)
+      ? pushOutOfTorso(target, avoidTorso.shoulderMid, avoidTorso.hipMid, this.torsoRadius)
       : target;
 
     const upperLength = this.#calibrateLength(upperJoint, distance3D(root, hint));

@@ -10,7 +10,7 @@ const _pushDir = new THREE.Vector3();
 // Le torse est modélisé comme une capsule simple entre le milieu des
 // épaules et le milieu des hanches. Rayon en mètres (échelle des
 // worldLandmarks de PoseLandmarker, centrés sur le buste).
-const DEFAULT_TORSO_RADIUS = 0.14;
+export const DEFAULT_TORSO_RADIUS = 0.14;
 
 // Si `target` (ex. la cible d'IK d'une main) tombe à l'intérieur de la
 // capsule torse, la repousse radialement à la surface. Sinon la renvoie

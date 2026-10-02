@@ -3,28 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>VTuber Studio</title>
   </head>
   <body>
     <div id="app">
-      <video id="webcam-source" autoplay playsinline muted></video>
+      <nav id="menubar"></nav>
 
-      <div id="viewport-stack">
-        <canvas id="overlay-canvas"></canvas>
-        <canvas id="scene-canvas"></canvas>
-      </div>
+      <aside id="left-panel" class="side-panel"></aside>
 
-      <div id="toolbar">
-        <select id="model-select" title="Modèle fourni"></select>
-        <label class="button">
-          Ouvrir un .vrm…
-          <input id="model-file" type="file" accept=".vrm" hidden />
-        </label>
-      </div>
+      <main id="viewport">
+        <div id="viewport-stack">
+          <video id="webcam-source" autoplay playsinline muted></video>
+          <canvas id="scene-canvas"></canvas>
+          <canvas id="overlay-canvas"></canvas>
+        </div>
+        <div id="joint-dock"></div>
+        <div id="drop-hint">Déposer un fichier .vrm</div>
+      </main>
 
-      <div id="drop-hint">Déposer un fichier .vrm</div>
+      <aside id="right-panel" class="side-panel"></aside>
 
-      <div id="status-bar"></div>
+      <footer id="status-bar"></footer>
+
+      <input id="model-file" type="file" accept=".vrm" hidden />
+      <input id="settings-file" type="file" accept=".json,application/json" hidden />
     </div>
 
     <script type="module" src="/src/main.js"></script>
