@@ -25,26 +25,23 @@ let task = null;
 let kind = null;
 let options = null;
 let delegate = null;
-// Vrai tant qu'aucune frame n'a été traitée avec succès sur GPU : certaines
-// erreurs de graphe GPU n'apparaissent qu'à la première inférence (ex.
-// Holistic : FaceBlendshapesGraph « No support of const » en WebGL), pas à
-// la création de la tâche.
+// Vrai tant qu'aucune frame n'a été traitée avec succès sur GPU : si la
+// première inférence lève une exception, on bascule sur CPU.
 let gpuUnproven = false;
 
-// MediaPipe ne lève pas d'exception quand son graphe échoue pendant une
-// inférence : il journalise l'erreur (console.error, via emscripten) et
-// renvoie un résultat vide. On repère donc ces messages pour savoir si la
-// dernière inférence a réellement abouti.
-let graphError = null;
-const consoleError = console.error.bind(console);
-console.error = (...args) => {
-  const text = args.map(String).join(' ');
-  if (/was not ok|Graph has errors|before StartRun/.test(text)) graphError ??= text;
-  consoleError(...args);
-};
+// Détecteurs dont le graphe ne fonctionne pas en WebGL : démarrés
+// directement sur CPU. Holistic : FaceBlendshapesGraph échoue (« No support
+// of const ») au démarrage du graphe, puis chaque frame est rejetée
+// (« AddPacketToInputStream() is called before StartRun() »). MediaPipe ne
+// lève alors aucune exception (erreurs seulement journalisées par son
+// runtime WASM) : l'échec n'est pas détectable de façon fiable après coup.
+const CPU_ONLY = new Set(['holistic']);
 
 // GPU d'abord (WebGL2 via OffscreenCanvas), CPU si indisponible.
 async function createTask(detectorKind, options) {
+  if (CPU_ONLY.has(detectorKind)) {
+    return { task: await createDetectorTask(detectorKind, fileset, 'CPU', options), delegate: 'CPU' };
+  }
   try {
     return { task: await createDetectorTask(detectorKind, fileset, 'GPU', options), delegate: 'GPU' };
   } catch (error) {
@@ -72,11 +69,9 @@ self.onmessage = async ({ data }) => {
   if (data.type === 'frame') {
     const { frame, timestamp } = data;
     try {
-      graphError = null;
       const start = performance.now();
       const result = task.detectForVideo(frame, timestamp);
       const inferenceMs = performance.now() - start;
-      if (graphError) throw new Error(graphError.split('\n')[0]);
       gpuUnproven = false;
       self.postMessage({ type: 'result', timestamp, parts: normalizeResult(kind, result), inferenceMs });
     } catch (error) {
