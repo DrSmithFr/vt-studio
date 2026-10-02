@@ -22,6 +22,9 @@ export class WorkerBackend {
             this.delegate = data.delegate;
             resolve();
             break;
+          case 'delegate':
+            this.delegate = data.delegate;
+            break;
           case 'result':
             this.busy = false;
             this.onResult?.(data);

@@ -5,6 +5,7 @@
 //   { type: 'frame', frame: ImageBitmap, timestamp } — détecte (frame transférée)
 // Messages envoyés :
 //   { type: 'ready', delegate }
+//   { type: 'delegate', delegate }               — repli CPU après coup
 //   { type: 'result', timestamp, parts, inferenceMs }
 //   { type: 'error', message }
 //
@@ -22,6 +23,13 @@ const fileset = {
 
 let task = null;
 let kind = null;
+let options = null;
+let delegate = null;
+// Vrai tant qu'aucune frame n'a été traitée avec succès sur GPU : certaines
+// erreurs de graphe GPU n'apparaissent qu'à la première inférence (ex.
+// Holistic : FaceBlendshapesGraph « No support of const » en WebGL), pas à
+// la création de la tâche.
+let gpuUnproven = false;
 
 // GPU d'abord (WebGL2 via OffscreenCanvas), CPU si indisponible.
 async function createTask(detectorKind, options) {
@@ -37,9 +45,12 @@ self.onmessage = async ({ data }) => {
   if (data.type === 'init') {
     try {
       kind = data.kind;
-      const created = await createTask(kind, data.options);
+      options = data.options;
+      const created = await createTask(kind, options);
       task = created.task;
-      self.postMessage({ type: 'ready', delegate: created.delegate });
+      delegate = created.delegate;
+      gpuUnproven = delegate === 'GPU';
+      self.postMessage({ type: 'ready', delegate });
     } catch (error) {
       self.postMessage({ type: 'error', message: error?.message ?? String(error) });
     }
@@ -52,11 +63,33 @@ self.onmessage = async ({ data }) => {
       const start = performance.now();
       const result = task.detectForVideo(frame, timestamp);
       const inferenceMs = performance.now() - start;
+      gpuUnproven = false;
       self.postMessage({ type: 'result', timestamp, parts: normalizeResult(kind, result), inferenceMs });
     } catch (error) {
-      self.postMessage({ type: 'error', message: error?.message ?? String(error) });
+      if (gpuUnproven) {
+        await fallBackToCpu(error);
+      } else {
+        self.postMessage({ type: 'error', message: error?.message ?? String(error) });
+      }
     } finally {
       frame.close();
     }
   }
 };
+
+// Recrée la tâche sur CPU après l'échec de la première inférence GPU. La
+// frame en cours est perdue ; la suivante passe par le CPU.
+async function fallBackToCpu(error) {
+  console.warn(`[${kind}] échec de l'inférence GPU, repli CPU.`, error);
+  gpuUnproven = false;
+  try {
+    task.close();
+    task = await createDetectorTask(kind, fileset, 'CPU', options);
+    delegate = 'CPU';
+    self.postMessage({ type: 'delegate', delegate });
+    // Libère le backend : aucune frame n'a produit de résultat.
+    self.postMessage({ type: 'error', message: 'GPU non supporté pour ce détecteur, repli CPU' });
+  } catch (cpuError) {
+    self.postMessage({ type: 'error', message: cpuError?.message ?? String(cpuError) });
+  }
+}
